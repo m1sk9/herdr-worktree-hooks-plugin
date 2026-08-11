@@ -1,6 +1,6 @@
 id = "m1sk9.worktree-hooks"
 name = "Worktree Hooks"
-version = "0.1.0" # x-release-please-version
+version = "0.1.1" # x-release-please-version
 min_herdr_version = "0.8.0"
 description = "Copy gitignored files from the main checkout and run setup commands when a worktree is created"
 platforms = ["macos", "linux"]
