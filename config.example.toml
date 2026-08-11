@@ -1,0 +1,39 @@
+# Copy this file to the directory printed by
+#   herdr plugin config-dir m1sk9.worktree-hooks
+# and name it config.toml. Copied verbatim it only restores the built-in
+# behaviour, so uncomment what you need.
+
+# Shell used for `run` entries. Defaults to $SHELL, then /bin/sh.
+# shell = "/bin/zsh"
+
+# Opening an existing worktree also emits workspace.created, so that event only
+# applies to a checkout created within this many seconds. Raise it if worktree
+# creation on your machine is slow (worktree.created ignores this window).
+# fresh_window_secs = 300
+
+# Applied to every repository. These two are also the built-in defaults.
+[defaults]
+copy = [".env", ".env.local"]
+run = []
+
+# Per-repository overrides. The key is either the repository name or the
+# absolute path of the main checkout; an absolute key wins over a name key for
+# the same repository. `copy` and `run` are appended to [defaults] and
+# deduplicated.
+#
+# `copy` paths are relative to the main checkout. Globs are not supported, and a
+# path that is absolute or contains `..` is rejected. Parent directories are
+# created as needed.
+#
+# `run` commands execute in the new worktree with $MAIN, $WORKTREE, $REPO,
+# $BRANCH and $EVENT exported. A non-zero exit releases the claim, so the next
+# creation event retries.
+
+# [repos.my-app]
+# copy = [".env.test", "config/secrets.yml"]
+# run = ["pnpm install --frozen-lockfile"]
+
+# [repos."/path/to/checkouts/other-app"]
+# inherit = false          # start from an empty list instead of [defaults]
+# copy = [".env"]
+# run = ["direnv allow", "make setup"]

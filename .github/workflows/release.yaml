@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+# Why no build or publish job: herdr installs a plugin by cloning the repository
+# at a git ref and running the manifest's `[[build]]` locally, so a release is
+# the tag and changelog — there is no artifact to ship.
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+          # Skip token revocation because expired tokens are automatically
+          # invalidated by GitHub anyway.
+          skip-token-revoke: true
+
+      - name: Run release-please-action
+        uses: googleapis/release-please-action@v5
+        id: release
+        with:
+          token: ${{ steps.app-token.outputs.token }}

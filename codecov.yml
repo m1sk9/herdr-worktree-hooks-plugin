@@ -1,0 +1,11 @@
+# Codecov configuration for herdr-worktree-hooks-plugin.
+#
+# The following files are process glue that only has meaning inside a running
+# herdr session: they read the HERDR_* environment, dispatch subcommands and
+# shell out to the herdr binary. Exercising them would mean asserting against a
+# live herdr server rather than against this crate's logic, so they are excluded
+# to keep the reported numbers focused on the parts unit tests can pin down
+# (event payload parsing, config merging, claims, copy/run).
+ignore:
+  - "src/main.rs"
+  - "src/herdr.rs"

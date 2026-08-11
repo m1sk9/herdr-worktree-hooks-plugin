@@ -1,0 +1,16 @@
+[package]
+name = "herdr-worktree-hooks-plugin"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/m1sk9/herdr-worktree-hooks-plugin"
+readme = "README.md"
+description = "A plugin that adds customizable hooks to Herdr's Worktree"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+toml = "1.1.4"
+
+[dev-dependencies]
+tempfile = "3.27.0"

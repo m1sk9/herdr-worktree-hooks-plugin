@@ -1,0 +1,40 @@
+id = "m1sk9.worktree-hooks"
+name = "Worktree Hooks"
+version = "0.0.0" # x-release-please-version
+min_herdr_version = "0.8.0"
+description = "Copy gitignored files from the main checkout and run setup commands when a worktree is created"
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["cargo", "build", "--release"]
+
+# Marks every worktree that already exists as done, so that `workspace.focused`
+# on a restored worktree is not mistaken for a brand new one.
+[[startup]]
+command = ["target/release/herdr-worktree-hooks-plugin", "seed"]
+
+# Why not also workspace.focused: on herdr 0.8.0 the sidebar's New Worktree was
+# measured emitting worktree.created and workspace.created within the same
+# millisecond, so focus adds no coverage — only a process spawn on every switch.
+# Both creation events stay subscribed because they race and either may win.
+[[events]]
+on = "worktree.created"
+command = ["target/release/herdr-worktree-hooks-plugin", "on-event"]
+
+[[events]]
+on = "workspace.created"
+command = ["target/release/herdr-worktree-hooks-plugin", "on-event"]
+
+[[actions]]
+id = "apply"
+title = "Apply worktree hooks"
+contexts = ["workspace"]
+command = ["target/release/herdr-worktree-hooks-plugin", "apply", "--force"]
+
+# The startup hook does not run for a plugin linked mid-session, which would
+# leave every existing worktree unclaimed until the next restart.
+[[actions]]
+id = "seed"
+title = "Mark existing worktrees as already applied"
+contexts = ["workspace"]
+command = ["target/release/herdr-worktree-hooks-plugin", "seed"]
