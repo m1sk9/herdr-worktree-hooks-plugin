@@ -1,6 +1,6 @@
 [package]
 name = "herdr-worktree-hooks-plugin"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/m1sk9/herdr-worktree-hooks-plugin"
