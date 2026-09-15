@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.2...v0.1.3) (2026-09-15)
+
+
+### Miscellaneous
+
+* **deps:** update codecov/codecov-action action to v7.1.0 ([#9](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/9)) ([930c8e5](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/930c8e5b7ca93bf5b26f007b1c6e17c297f14379))
+
 ## [0.1.2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.1...v0.1.2) (2026-09-13)
 
 
