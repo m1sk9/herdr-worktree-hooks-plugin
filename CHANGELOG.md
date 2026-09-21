@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.3](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.2...v0.1.3) (2026-09-21)
+
+
+### Miscellaneous
+
+* **deps:** update codecov/codecov-action action to v7.1.0 ([#9](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/9)) ([930c8e5](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/930c8e5b7ca93bf5b26f007b1c6e17c297f14379))
+* **deps:** update codecov/codecov-action action to v7.1.1 ([#12](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/12)) ([95404e2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/95404e22c8af9b3f330a0d4033e40fc278c4347f))
+* **deps:** update taiki-e/install-action digest to 94c31af ([#11](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/11)) ([73da38d](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/73da38d64fcd171923a840a890a6f90b6d8875bf))
+
 ## [0.1.2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.1...v0.1.2) (2026-09-13)
 
 
