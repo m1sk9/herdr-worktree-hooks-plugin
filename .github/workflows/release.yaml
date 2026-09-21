@@ -5,9 +5,6 @@ on:
     branches:
       - main
 
-# Why no build or publish job: herdr installs a plugin by cloning the repository
-# at a git ref and running the manifest's `[[build]]` locally, so a release is
-# the tag and changelog — there is no artifact to ship.
 permissions:
   contents: write
   pull-requests: write
@@ -15,6 +12,9 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-24.04
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -36,3 +36,100 @@ jobs:
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
+
+  # herdr-plugin.toml's [[build]] downloads one of these archives instead of
+  # running `cargo build --release` on the user's machine (see
+  # scripts/install.sh), so a release now has to carry the binaries it points at.
+  assets:
+    name: assets (${{ matrix.job.target }})
+    needs: release-please
+    if: needs.release-please.outputs.release_created
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job:
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          # Builds natively on GitHub's arm64 runner rather than through cross,
+          # avoiding both a Docker image and a `cargo install cross` step.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    steps:
+      # The tag rather than the branch: main can move on while this runs, and
+      # an asset must be built from exactly the source the release points at.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.job.target }}
+
+      # note: In Ubuntu-latest (Ubuntu 24), musl-tools has disappeared, so it
+      # must be installed separately. aarch64 musl fails to link without it too.
+      - name: Install musl-gcc
+        if: contains(matrix.job.target, 'musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.job.target }}
+
+      # The archive name carries no version; scripts/install.sh derives it from
+      # herdr-plugin.toml and only the tag in the download url has to match.
+      - name: Package
+        env:
+          TARGET: ${{ matrix.job.target }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist/herdr-worktree-hooks-plugin
+          cp "target/${TARGET}/release/herdr-worktree-hooks-plugin" dist/herdr-worktree-hooks-plugin/
+          cp LICENSE README.md dist/herdr-worktree-hooks-plugin/
+          tar -czf "herdr-worktree-hooks-plugin-${TARGET}.tar.gz" -C dist/herdr-worktree-hooks-plugin .
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: herdr-worktree-hooks-plugin-${{ matrix.job.target }}
+          path: herdr-worktree-hooks-plugin-${{ matrix.job.target }}.tar.gz
+          if-no-files-found: error
+
+  release-assets:
+    name: attach assets to the release
+    needs:
+      - release-please
+      - assets
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      # scripts/install.sh verifies against the per-archive file, which has to
+      # hold a bare filename since that is what it downloads alongside it.
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+
+          cd dist
+          for archive in *.tar.gz; do
+            sha256sum -- "${archive}" > "${archive}.sha256"
+          done
+          cat -- *.tar.gz.sha256 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attach assets to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: gh release upload "${TAG}" dist/*.tar.gz dist/*.tar.gz.sha256 dist/SHA256SUMS --clobber

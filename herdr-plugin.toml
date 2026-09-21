@@ -5,8 +5,11 @@ min_herdr_version = "0.8.0"
 description = "Copy gitignored files from the main checkout and run setup commands when a worktree is created"
 platforms = ["macos", "linux"]
 
+# Downloads the release's prebuilt binary instead of compiling locally, so
+# `herdr plugin install` no longer requires a Rust toolchain on the user's
+# machine. See scripts/install.sh and release.yaml's `assets` job.
 [[build]]
-command = ["cargo", "build", "--release"]
+command = ["sh", "scripts/install.sh"]
 
 # Marks every worktree that already exists as done, so that `workspace.focused`
 # on a restored worktree is not mistaken for a brand new one.

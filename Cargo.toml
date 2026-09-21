@@ -14,3 +14,8 @@ toml = "1.1.4"
 
 [dev-dependencies]
 tempfile = "3.27.0"
+
+[profile.release]
+# Released binaries are shipped as archives from GitHub Releases; debug symbols
+# roughly double the download for something no user of a prebuilt build can act on.
+strip = true
