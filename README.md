@@ -25,6 +25,10 @@ herdr plugin install m1sk9/herdr-worktree-hooks-plugin
 herdr plugin install m1sk9/herdr-worktree-hooks-plugin
 ```
 
+`[[build]]` downloads a prebuilt binary for your platform from the matching
+GitHub Release — no Rust toolchain required. Supported: macOS (aarch64) and
+Linux (x86_64, aarch64; both musl-linked).
+
 For local development, `herdr plugin link` does *not* run `[[build]]`, so build first:
 
 ```
