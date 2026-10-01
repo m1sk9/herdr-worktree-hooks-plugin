@@ -5,7 +5,7 @@ mod event;
 mod herdr;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use claim::ClaimStore;
 use config::Config;
@@ -147,17 +147,29 @@ fn apply_to(config: &Config, target: &WorktreeTarget, event_name: &str) -> Resul
         ..target.clone()
     };
 
+    let started = Instant::now();
     let report = actions::copy_files(
         Path::new(&target.repo_root),
         Path::new(&target.checkout_path),
         &resolved.copy,
+        resolved.max_files,
     )?;
+    // Why counts, not paths: a directory entry reports every file it holds.
     log!(
-        "copied={:?} skipped_existing={:?} missing_in_main={:?}",
-        report.copied,
-        report.skipped_existing,
-        report.missing_source
+        "copied={} skipped_existing={} in {:?} missing_in_main={:?} skipped_special={:?}",
+        report.copied.len(),
+        report.skipped_existing.len(),
+        started.elapsed(),
+        report.missing_source,
+        report.skipped_special
     );
+    if !report.skipped_too_large.is_empty() {
+        log!(
+            "skipped (more than max_files={} files; rebuild them with `run` instead): {:?}",
+            resolved.max_files,
+            report.skipped_too_large
+        );
+    }
 
     if !resolved.run.is_empty() {
         log!("running {} command(s)", resolved.run.len());
