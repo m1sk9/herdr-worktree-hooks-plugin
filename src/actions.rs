@@ -1,4 +1,5 @@
 use std::fs::FileType;
+use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -11,6 +12,7 @@ pub struct CopyReport {
     pub skipped_existing: Vec<String>,
     pub skipped_special: Vec<String>,
     pub skipped_too_large: Vec<String>,
+    pub skipped_repositories: Vec<String>,
     pub missing_source: Vec<String>,
 }
 
@@ -22,6 +24,8 @@ pub struct CopyReport {
 /// A directory holding more than `max_files` files is skipped as a whole
 /// rather than failing the run: a failure releases the claim, so every later
 /// event would hit the same limit again and `run` would never get to rebuild it.
+/// For the same reason, a file that vanishes from main mid-walk (a build
+/// cleaning up after itself) is reported as missing instead of failing.
 pub fn copy_files(
     main: &Path,
     worktree: &Path,
@@ -35,6 +39,11 @@ pub fn copy_files(
         let relative = validate_entry(entry)?;
         let source = main.join(&relative);
         let destination = worktree.join(&relative);
+
+        if has_symlinked_ancestor(worktree, &relative) {
+            report.skipped_existing.push(entry.clone());
+            continue;
+        }
 
         // `metadata` follows a symlinked entry on purpose (like `cp -RH`): the
         // entry names what should be seeded, not how main happens to store it.
@@ -81,41 +90,71 @@ fn copy_dir(
     worktree_id: (u64, u64),
     report: &mut CopyReport,
 ) -> Result<(), String> {
+    let label_str = label.to_string_lossy().into_owned();
+    let metadata = match std::fs::metadata(source) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            report.missing_source.push(label_str);
+            return Ok(());
+        }
+        Err(e) => return Err(format!("{}: {e}", source.display())),
+    };
     // Why not descend: a worktree nested inside the main checkout would be
     // copied into itself, growing while it is being walked.
-    if file_id(source)? == worktree_id {
+    if (metadata.dev(), metadata.ino()) == worktree_id {
         return Ok(());
     }
 
-    match destination.symlink_metadata() {
-        Ok(existing) if existing.is_dir() => {}
+    let created = match destination.symlink_metadata() {
+        Ok(existing) if existing.is_dir() => false,
         // Why not merge through it: a file or symlink at this path belongs to
         // the worktree, and following a symlink could write outside of it.
         Ok(_) => {
-            report
-                .skipped_existing
-                .push(label.to_string_lossy().into_owned());
+            report.skipped_existing.push(label_str);
             return Ok(());
         }
-        Err(_) => std::fs::create_dir(destination)
-            .map_err(|e| format!("{}: {e}", destination.display()))?,
-    }
+        Err(_) => {
+            std::fs::create_dir(destination)
+                .map_err(|e| format!("{}: {e}", destination.display()))?;
+            true
+        }
+    };
 
-    let children = std::fs::read_dir(source).map_err(|e| format!("{}: {e}", source.display()))?;
+    let children = match std::fs::read_dir(source) {
+        Ok(children) => children,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            report.missing_source.push(label_str);
+            return Ok(());
+        }
+        Err(e) => return Err(format!("{}: {e}", source.display())),
+    };
     for child in children {
         let child = child.map_err(|e| format!("{}: {e}", source.display()))?;
-        let file_type = child
-            .file_type()
-            .map_err(|e| format!("{}: {e}", child.path().display()))?;
+        let file_type = match child.file_type() {
+            Ok(file_type) => file_type,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("{}: {e}", child.path().display())),
+        };
         let from = child.path();
         let to = destination.join(child.file_name());
         let label = label.join(child.file_name());
 
-        if file_type.is_dir() {
+        if file_type.is_dir() && is_repository(&from) {
+            report
+                .skipped_repositories
+                .push(label.to_string_lossy().into_owned());
+        } else if file_type.is_dir() {
             copy_dir(&from, &to, &label, worktree_id, report)?;
         } else {
             copy_leaf(&from, &to, &label, file_type, report)?;
         }
+    }
+
+    // Why not right after `create_dir`: a read-only source mode would block
+    // creating the children.
+    if created {
+        std::fs::set_permissions(destination, metadata.permissions())
+            .map_err(|e| format!("{}: {e}", destination.display()))?;
     }
     Ok(())
 }
@@ -137,13 +176,31 @@ fn copy_leaf(
         // Why not follow: a link inside a directory can form a cycle or reach
         // outside the repository; recreated verbatim it can do neither. The cost
         // is that an absolute link into main stays shared with main.
-        let target =
-            std::fs::read_link(source).map_err(|e| format!("{}: {e}", source.display()))?;
+        let target = match std::fs::read_link(source) {
+            Ok(target) => target,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                report.missing_source.push(label);
+                return Ok(());
+            }
+            Err(e) => return Err(format!("{}: {e}", source.display())),
+        };
         symlink(&target, destination)
             .map_err(|e| format!("{} -> {}: {e}", destination.display(), target.display()))?;
     } else if file_type.is_file() {
-        std::fs::copy(source, destination)
-            .map_err(|e| format!("{} -> {}: {e}", source.display(), destination.display()))?;
+        match std::fs::copy(source, destination) {
+            Ok(_) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                report.missing_source.push(label);
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(format!(
+                    "{} -> {}: {e}",
+                    source.display(),
+                    destination.display()
+                ));
+            }
+        }
     } else {
         report.skipped_special.push(label);
         return Ok(());
@@ -158,33 +215,67 @@ fn exceeds(dir: &Path, max_files: usize, worktree_id: (u64, u64)) -> Result<bool
     Ok(count > max_files)
 }
 
-/// Walks exactly what `copy_dir` would copy, stopping as soon as the count
-/// passes `limit` so a huge tree costs no more than the limit to reject.
+/// Why not walk the whole tree: stopping once the count passes `limit` keeps
+/// rejecting a huge tree as cheap as the limit itself. Subtrees that `copy_dir`
+/// would skip as already present are still counted, so this may overcount.
 fn count_files(
     dir: &Path,
     limit: usize,
     worktree_id: (u64, u64),
     count: &mut usize,
 ) -> Result<(), String> {
-    if file_id(dir)? == worktree_id {
-        return Ok(());
+    match std::fs::metadata(dir) {
+        Ok(metadata) if (metadata.dev(), metadata.ino()) == worktree_id => return Ok(()),
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
     }
-    let children = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let children = match std::fs::read_dir(dir) {
+        Ok(children) => children,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
     for child in children {
         if *count > limit {
             return Ok(());
         }
         let child = child.map_err(|e| format!("{}: {e}", dir.display()))?;
-        let file_type = child
-            .file_type()
-            .map_err(|e| format!("{}: {e}", child.path().display()))?;
-        if file_type.is_dir() {
+        let file_type = match child.file_type() {
+            Ok(file_type) => file_type,
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(format!("{}: {e}", child.path().display())),
+        };
+        if file_type.is_dir() && is_repository(&child.path()) {
+            continue;
+        } else if file_type.is_dir() {
             count_files(&child.path(), limit, worktree_id, count)?;
         } else {
             *count += 1;
         }
     }
     Ok(())
+}
+
+/// Why not leave it to `create_dir_all`: it follows a symlinked ancestor, so
+/// the entry would be seeded wherever that worktree link points.
+fn has_symlinked_ancestor(worktree: &Path, relative: &Path) -> bool {
+    relative
+        .parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .filter(|ancestor| !ancestor.as_os_str().is_empty())
+        .any(|ancestor| {
+            worktree
+                .join(ancestor)
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+        })
+}
+
+/// Why not copy it: a nested worktree or submodule is its own checkout, and a
+/// copied `.git` file would still point at the original's git directory.
+fn is_repository(dir: &Path) -> bool {
+    dir.join(".git").symlink_metadata().is_ok()
 }
 
 fn file_id(path: &Path) -> Result<(u64, u64), String> {
@@ -502,6 +593,55 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_under_a_symlinked_worktree_directory_is_not_copied_through_it() {
+        let p = pair();
+        let outside = p._root.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(p.main.join("config/nested")).unwrap();
+        std::fs::write(p.main.join("config/nested/secrets.yml"), "secret").unwrap();
+        std::os::unix::fs::symlink(&outside, p.worktree.join("config")).unwrap();
+
+        let report = copy_files(
+            &p.main,
+            &p.worktree,
+            &entries(&["config/nested"]),
+            DEFAULT_MAX_FILES,
+        )
+        .unwrap();
+
+        assert_eq!(report.skipped_existing, vec!["config/nested"]);
+        assert!(!outside.join("nested").exists());
+    }
+
+    #[test]
+    fn a_created_directory_keeps_the_source_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("secrets/readonly")).unwrap();
+        std::fs::write(p.main.join("secrets/readonly/key"), "key").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let set_mode = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set_mode(&p.main.join("secrets"), 0o700);
+        set_mode(&p.main.join("secrets/readonly"), 0o500);
+
+        let report = copy_files(
+            &p.main,
+            &p.worktree,
+            &entries(&["secrets"]),
+            DEFAULT_MAX_FILES,
+        );
+        let copied_mode = |rel: &str| mode(&p.worktree.join(rel));
+        let modes = (copied_mode("secrets"), copied_mode("secrets/readonly"));
+        set_mode(&p.main.join("secrets/readonly"), 0o700);
+        set_mode(&p.worktree.join("secrets/readonly"), 0o700);
+
+        assert_eq!(report.unwrap().copied, vec!["secrets/readonly/key"]);
+        assert_eq!(modes, (0o700, 0o500));
+    }
+
+    #[test]
     fn a_worktree_nested_inside_main_is_not_copied_into_itself() {
         let root = tempfile::tempdir().unwrap();
         let main = root.path().to_path_buf();
@@ -543,6 +683,59 @@ mod tests {
 
         assert!(report.skipped_too_large.is_empty());
         assert_eq!(report.copied.len(), 2);
+    }
+
+    #[test]
+    fn a_nested_repository_inside_a_directory_is_skipped_and_reported() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join(".worktrees/other")).unwrap();
+        std::fs::write(p.main.join(".worktrees/other/.git"), "gitdir: x").unwrap();
+        std::fs::write(p.main.join(".worktrees/notes.md"), "").unwrap();
+
+        let report = copy_files(
+            &p.main,
+            &p.worktree,
+            &entries(&[".worktrees"]),
+            DEFAULT_MAX_FILES,
+        )
+        .unwrap();
+
+        assert_eq!(report.skipped_repositories, vec![".worktrees/other"]);
+        assert_eq!(report.copied, vec![".worktrees/notes.md"]);
+        assert!(!p.worktree.join(".worktrees/other").exists());
+    }
+
+    #[test]
+    fn an_entry_that_is_itself_a_repository_is_still_copied() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join(".git")).unwrap();
+        std::fs::write(p.main.join(".env"), "TOKEN=main").unwrap();
+
+        copy_files(&p.main, &p.worktree, &entries(&["."]), DEFAULT_MAX_FILES).unwrap();
+
+        assert!(p.worktree.join(".env").exists());
+    }
+
+    #[test]
+    fn a_file_that_vanished_after_listing_is_reported_as_missing() {
+        let p = pair();
+        std::fs::write(p.main.join("present"), "").unwrap();
+        let file_type = std::fs::symlink_metadata(p.main.join("present"))
+            .unwrap()
+            .file_type();
+        let mut report = CopyReport::default();
+
+        copy_leaf(
+            &p.main.join("gone.tmp"),
+            &p.worktree.join("gone.tmp"),
+            Path::new("build/gone.tmp"),
+            file_type,
+            &mut report,
+        )
+        .unwrap();
+
+        assert_eq!(report.missing_source, vec!["build/gone.tmp"]);
+        assert!(report.copied.is_empty());
     }
 
     #[test]

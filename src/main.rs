@@ -156,12 +156,13 @@ fn apply_to(config: &Config, target: &WorktreeTarget, event_name: &str) -> Resul
     )?;
     // Why counts, not paths: a directory entry reports every file it holds.
     log!(
-        "copied={} skipped_existing={} in {:?} missing_in_main={:?} skipped_special={:?}",
+        "copy took {:?}: copied={} skipped_existing={} missing_in_main={:?} skipped_special={:?} skipped_repositories={:?}",
+        started.elapsed(),
         report.copied.len(),
         report.skipped_existing.len(),
-        started.elapsed(),
         report.missing_source,
-        report.skipped_special
+        report.skipped_special,
+        report.skipped_repositories
     );
     if !report.skipped_too_large.is_empty() {
         log!(
