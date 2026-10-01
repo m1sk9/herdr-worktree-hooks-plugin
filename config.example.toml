@@ -15,6 +15,10 @@
 [defaults]
 copy = [".env", ".env.local"]
 run = []
+# A `copy` directory with more files than this is skipped rather than copied;
+# rebuild such trees (node_modules, target, ...) with `run` instead. A repo
+# section's value wins over this one.
+# max_files = 10000
 
 # Per-repository overrides. The key is either the repository name or the
 # absolute path of the main checkout; an absolute key wins over a name key for
@@ -23,7 +27,9 @@ run = []
 #
 # `copy` paths are relative to the main checkout. Globs are not supported, and a
 # path that is absolute or contains `..` is rejected. Parent directories are
-# created as needed.
+# created as needed. A directory is merged file by file without overwriting
+# anything already in the worktree; symlinks inside it are recreated, not
+# followed.
 #
 # `run` commands execute in the new worktree with $MAIN, $WORKTREE, $REPO,
 # $BRANCH and $EVENT exported. A non-zero exit releases the claim, so the next

@@ -65,6 +65,16 @@ With no config file at all, the plugin copies `.env` and `.env.local`.
 
 Paths relative to the main checkout. Globs are not supported. A path that is absolute or contains `..` is rejected. Parent directories are created as needed, so `config/secrets.yml` works.
 
+A directory is merged file by file: files that already exist in the worktree (tracked ones included) are kept, and only the missing ones are copied. So `copy = ["config"]` seeds the gitignored files under `config/` without touching the rest.
+
+- An entry that is itself a symlink is followed, and its target is copied.
+- A symlink *inside* a copied directory is recreated as the same symlink, never followed. This keeps cycles and links leading out of the repository harmless, but an absolute link into the main checkout ends up shared with it.
+- FIFOs, sockets and device files are skipped and logged.
+- A subdirectory containing `.git` (another worktree or a submodule) is its own checkout and is skipped and logged.
+- A file that disappears from the main checkout while it is being copied is logged as missing instead of failing the run.
+
+A directory entry holding more than `max_files` files (default 10,000, counted before anything is copied) is skipped as a whole and logged; the other entries and `run` still go ahead. Trees such as `node_modules` are meant to be rebuilt with `run` (for example `pnpm install`), not copied. Raise `max_files` in `[defaults]` or a `[repos.*]` section if a large directory really should be copied.
+
 ### `run`
 
 Shell command strings executed in the new worktree, in order, with:

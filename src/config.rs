@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const DEFAULT_FRESH_WINDOW_SECS: u64 = 300;
+/// Comfortably above `config/` or `.venv/bin`, well below any `node_modules`.
+pub const DEFAULT_MAX_FILES: usize = 10_000;
 
 const BUILTIN_COPY: [&str; 2] = [".env", ".env.local"];
 
@@ -23,14 +25,16 @@ pub struct Section {
     pub copy: Vec<String>,
     #[serde(default)]
     pub run: Vec<String>,
+    pub max_files: Option<usize>,
     pub inherit: Option<bool>,
 }
 
-/// A repo's effective `copy` / `run` lists after merging `[defaults]`.
-#[derive(Debug, Default, PartialEq, Eq)]
+/// A repo's effective settings after merging `[defaults]`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct Resolved {
     pub copy: Vec<String>,
     pub run: Vec<String>,
+    pub max_files: usize,
 }
 
 impl Config {
@@ -64,6 +68,7 @@ impl Config {
         let defaults = self.defaults.clone().unwrap_or_else(|| Section {
             copy: BUILTIN_COPY.iter().map(|s| s.to_string()).collect(),
             run: Vec::new(),
+            max_files: None,
             inherit: None,
         });
 
@@ -71,6 +76,7 @@ impl Config {
             return Resolved {
                 copy: dedup(defaults.copy),
                 run: dedup(defaults.run),
+                max_files: defaults.max_files.unwrap_or(DEFAULT_MAX_FILES),
             };
         };
 
@@ -78,12 +84,17 @@ impl Config {
             return Resolved {
                 copy: dedup(section.copy.clone()),
                 run: dedup(section.run.clone()),
+                max_files: section.max_files.unwrap_or(DEFAULT_MAX_FILES),
             };
         }
 
         Resolved {
             copy: dedup([defaults.copy, section.copy.clone()].concat()),
             run: dedup([defaults.run, section.run.clone()].concat()),
+            max_files: section
+                .max_files
+                .or(defaults.max_files)
+                .unwrap_or(DEFAULT_MAX_FILES),
         }
     }
 
@@ -197,6 +208,31 @@ mod tests {
         );
         let resolved = config.resolve("my-app", "/home/dev/src/github.com/acme/my-app");
         assert_eq!(resolved.copy, vec![".env.byroot"]);
+    }
+
+    #[test]
+    fn max_files_defaults_when_unset() {
+        let config = parse("");
+        assert_eq!(
+            config.resolve("my-app", "/repo").max_files,
+            DEFAULT_MAX_FILES
+        );
+    }
+
+    #[test]
+    fn repo_max_files_overrides_defaults() {
+        let config = parse("[defaults]\nmax_files = 50\n[repos.my-app]\nmax_files = 200000\n");
+        assert_eq!(config.resolve("my-app", "/repo").max_files, 200_000);
+        assert_eq!(config.resolve("other", "/repo").max_files, 50);
+    }
+
+    #[test]
+    fn inherit_false_ignores_defaults_max_files() {
+        let config = parse("[defaults]\nmax_files = 50\n[repos.my-app]\ninherit = false\n");
+        assert_eq!(
+            config.resolve("my-app", "/repo").max_files,
+            DEFAULT_MAX_FILES
+        );
     }
 
     #[test]
