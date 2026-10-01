@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.3...v0.2.0) (2026-10-01)
+
+
+### Features
+
+* copy directory entries recursively, skipping trees over `max_files` ([279790f](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/279790f635d7d907aa0e27c90a160caf8552186d))
+
+
+### Miscellaneous
+
+* **deps:** update taiki-e/install-action digest to 83ac0ad ([#14](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/14)) ([b61a0ec](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/b61a0ec63eddbf92eb04289676f9f611c0b7a6d5))
+
 ## [0.1.3](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.2...v0.1.3) (2026-09-21)
 
 
