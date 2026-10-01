@@ -1,5 +1,7 @@
+use std::ffi::OsString;
+use std::fmt::Display;
 use std::fs::FileType;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind};
 use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -14,6 +16,30 @@ pub struct CopyReport {
     pub skipped_too_large: Vec<String>,
     pub skipped_repositories: Vec<String>,
     pub missing_source: Vec<String>,
+}
+
+type FileId = (u64, u64);
+
+#[derive(Debug)]
+enum Failure {
+    /// The source was removed from main after it was listed.
+    Vanished,
+    Other(String),
+}
+
+impl Failure {
+    /// Why only reads of main: a NotFound while writing the worktree is not a
+    /// file that went away, and must not be passed off as one.
+    fn reading(e: io::Error, context: impl Display) -> Self {
+        match e.kind() {
+            ErrorKind::NotFound => Self::Vanished,
+            _ => Self::Other(format!("{context}: {e}")),
+        }
+    }
+
+    fn writing(e: io::Error, context: impl Display) -> Self {
+        Self::Other(format!("{context}: {e}"))
+    }
 }
 
 /// Copies each entry from the main checkout into the worktree, merging
@@ -33,7 +59,9 @@ pub fn copy_files(
     max_files: usize,
 ) -> Result<CopyReport, String> {
     let mut report = CopyReport::default();
-    let worktree_id = file_id(worktree)?;
+    let worktree_id = std::fs::metadata(worktree)
+        .map(|m| (m.dev(), m.ino()))
+        .map_err(|e| format!("{}: {e}", worktree.display()))?;
 
     for entry in entries {
         let relative = validate_entry(entry)?;
@@ -61,44 +89,53 @@ pub fn copy_files(
         if let Some(parent) = destination.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
         }
-        if metadata.is_dir() {
-            copy_dir(
-                &source,
-                &destination,
-                Path::new(entry),
-                worktree_id,
-                &mut report,
-            )?;
-        } else {
-            copy_leaf(
-                &source,
-                &destination,
-                Path::new(entry),
-                metadata.file_type(),
-                &mut report,
-            )?;
-        }
+        let file_type = metadata.file_type();
+        seed(
+            &source,
+            &destination,
+            Path::new(entry),
+            file_type,
+            worktree_id,
+            &mut report,
+        )?;
     }
 
     Ok(report)
+}
+
+fn seed(
+    source: &Path,
+    destination: &Path,
+    label: &Path,
+    file_type: FileType,
+    worktree_id: FileId,
+    report: &mut CopyReport,
+) -> Result<(), String> {
+    let seeded = if file_type.is_dir() {
+        copy_dir(source, destination, label, worktree_id, report)
+    } else {
+        copy_leaf(source, destination, label, file_type, report)
+    };
+    match seeded {
+        Ok(()) => Ok(()),
+        Err(Failure::Vanished) => {
+            report
+                .missing_source
+                .push(label.to_string_lossy().into_owned());
+            Ok(())
+        }
+        Err(Failure::Other(message)) => Err(message),
+    }
 }
 
 fn copy_dir(
     source: &Path,
     destination: &Path,
     label: &Path,
-    worktree_id: (u64, u64),
+    worktree_id: FileId,
     report: &mut CopyReport,
-) -> Result<(), String> {
-    let label_str = label.to_string_lossy().into_owned();
-    let metadata = match std::fs::metadata(source) {
-        Ok(metadata) => metadata,
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            report.missing_source.push(label_str);
-            return Ok(());
-        }
-        Err(e) => return Err(format!("{}: {e}", source.display())),
-    };
+) -> Result<(), Failure> {
+    let metadata = std::fs::metadata(source).map_err(|e| Failure::reading(e, source.display()))?;
     // Why not descend: a worktree nested inside the main checkout would be
     // copied into itself, growing while it is being walked.
     if (metadata.dev(), metadata.ino()) == worktree_id {
@@ -110,43 +147,30 @@ fn copy_dir(
         // Why not merge through it: a file or symlink at this path belongs to
         // the worktree, and following a symlink could write outside of it.
         Ok(_) => {
-            report.skipped_existing.push(label_str);
+            report
+                .skipped_existing
+                .push(label.to_string_lossy().into_owned());
             return Ok(());
         }
         Err(_) => {
             std::fs::create_dir(destination)
-                .map_err(|e| format!("{}: {e}", destination.display()))?;
+                .map_err(|e| Failure::writing(e, destination.display()))?;
             true
         }
     };
 
-    let children = match std::fs::read_dir(source) {
-        Ok(children) => children,
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            report.missing_source.push(label_str);
-            return Ok(());
-        }
-        Err(e) => return Err(format!("{}: {e}", source.display())),
-    };
-    for child in children {
-        let child = child.map_err(|e| format!("{}: {e}", source.display()))?;
-        let file_type = match child.file_type() {
-            Ok(file_type) => file_type,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(format!("{}: {e}", child.path().display())),
-        };
-        let from = child.path();
-        let to = destination.join(child.file_name());
-        let label = label.join(child.file_name());
+    let children = list_children(source).map_err(|e| Failure::reading(e, source.display()))?;
+    for (name, file_type) in children {
+        let from = source.join(&name);
+        let to = destination.join(&name);
+        let label = label.join(&name);
 
         if file_type.is_dir() && is_repository(&from) {
             report
                 .skipped_repositories
                 .push(label.to_string_lossy().into_owned());
-        } else if file_type.is_dir() {
-            copy_dir(&from, &to, &label, worktree_id, report)?;
         } else {
-            copy_leaf(&from, &to, &label, file_type, report)?;
+            seed(&from, &to, &label, file_type, worktree_id, report).map_err(Failure::Other)?;
         }
     }
 
@@ -154,7 +178,7 @@ fn copy_dir(
     // creating the children.
     if created {
         std::fs::set_permissions(destination, metadata.permissions())
-            .map_err(|e| format!("{}: {e}", destination.display()))?;
+            .map_err(|e| Failure::writing(e, destination.display()))?;
     }
     Ok(())
 }
@@ -165,7 +189,7 @@ fn copy_leaf(
     label: &Path,
     file_type: FileType,
     report: &mut CopyReport,
-) -> Result<(), String> {
+) -> Result<(), Failure> {
     let label = label.to_string_lossy().into_owned();
     if destination.symlink_metadata().is_ok() {
         report.skipped_existing.push(label);
@@ -176,31 +200,16 @@ fn copy_leaf(
         // Why not follow: a link inside a directory can form a cycle or reach
         // outside the repository; recreated verbatim it can do neither. The cost
         // is that an absolute link into main stays shared with main.
-        let target = match std::fs::read_link(source) {
-            Ok(target) => target,
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                report.missing_source.push(label);
-                return Ok(());
-            }
-            Err(e) => return Err(format!("{}: {e}", source.display())),
-        };
-        symlink(&target, destination)
-            .map_err(|e| format!("{} -> {}: {e}", destination.display(), target.display()))?;
+        let target =
+            std::fs::read_link(source).map_err(|e| Failure::reading(e, source.display()))?;
+        symlink(&target, destination).map_err(|e| Failure::writing(e, destination.display()))?;
     } else if file_type.is_file() {
-        match std::fs::copy(source, destination) {
-            Ok(_) => {}
-            Err(e) if e.kind() == ErrorKind::NotFound => {
-                report.missing_source.push(label);
-                return Ok(());
-            }
-            Err(e) => {
-                return Err(format!(
-                    "{} -> {}: {e}",
-                    source.display(),
-                    destination.display()
-                ));
-            }
-        }
+        std::fs::copy(source, destination).map_err(|e| {
+            Failure::reading(
+                e,
+                format_args!("{} -> {}", source.display(), destination.display()),
+            )
+        })?;
     } else {
         report.skipped_special.push(label);
         return Ok(());
@@ -209,7 +218,7 @@ fn copy_leaf(
     Ok(())
 }
 
-fn exceeds(dir: &Path, max_files: usize, worktree_id: (u64, u64)) -> Result<bool, String> {
+fn exceeds(dir: &Path, max_files: usize, worktree_id: FileId) -> Result<bool, String> {
     let mut count = 0;
     count_files(dir, max_files, worktree_id, &mut count)?;
     Ok(count > max_files)
@@ -221,39 +230,42 @@ fn exceeds(dir: &Path, max_files: usize, worktree_id: (u64, u64)) -> Result<bool
 fn count_files(
     dir: &Path,
     limit: usize,
-    worktree_id: (u64, u64),
+    worktree_id: FileId,
     count: &mut usize,
 ) -> Result<(), String> {
-    match std::fs::metadata(dir) {
-        Ok(metadata) if (metadata.dev(), metadata.ino()) == worktree_id => return Ok(()),
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    if is_worktree(dir, worktree_id) {
+        return Ok(());
     }
-    let children = match std::fs::read_dir(dir) {
-        Ok(children) => children,
+    let children = match list_children(dir) {
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("{}: {e}", dir.display())),
+        listed => listed.map_err(|e| format!("{}: {e}", dir.display()))?,
     };
-    for child in children {
+    for (name, file_type) in children {
         if *count > limit {
             return Ok(());
         }
-        let child = child.map_err(|e| format!("{}: {e}", dir.display()))?;
-        let file_type = match child.file_type() {
-            Ok(file_type) => file_type,
-            Err(e) if e.kind() == ErrorKind::NotFound => continue,
-            Err(e) => return Err(format!("{}: {e}", child.path().display())),
-        };
-        if file_type.is_dir() && is_repository(&child.path()) {
-            continue;
-        } else if file_type.is_dir() {
-            count_files(&child.path(), limit, worktree_id, count)?;
-        } else {
+        let child = dir.join(name);
+        if !file_type.is_dir() {
             *count += 1;
+        } else if !is_repository(&child) {
+            count_files(&child, limit, worktree_id, count)?;
         }
     }
     Ok(())
+}
+
+/// Why not skip only the child whose `file_type` failed: it only stats on a
+/// filesystem without `d_type`, and re-applying fills in what was skipped.
+fn list_children(dir: &Path) -> io::Result<Vec<(OsString, FileType)>> {
+    std::fs::read_dir(dir)?
+        .map(|child| child.and_then(|c| Ok((c.file_name(), c.file_type()?))))
+        .collect()
+}
+
+/// Why not propagate the error: a directory that cannot be stat-ed is not the
+/// worktree, and reading it right after reports the failure anyway.
+fn is_worktree(path: &Path, worktree_id: FileId) -> bool {
+    std::fs::metadata(path).is_ok_and(|m| (m.dev(), m.ino()) == worktree_id)
 }
 
 /// Why not leave it to `create_dir_all`: it follows a symlinked ancestor, so
@@ -276,11 +288,6 @@ fn has_symlinked_ancestor(worktree: &Path, relative: &Path) -> bool {
 /// copied `.git` file would still point at the original's git directory.
 fn is_repository(dir: &Path) -> bool {
     dir.join(".git").symlink_metadata().is_ok()
-}
-
-fn file_id(path: &Path) -> Result<(u64, u64), String> {
-    let metadata = std::fs::metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok((metadata.dev(), metadata.ino()))
 }
 
 /// Runs each configured command in the new worktree with the paths exposed as
@@ -725,11 +732,12 @@ mod tests {
             .file_type();
         let mut report = CopyReport::default();
 
-        copy_leaf(
+        seed(
             &p.main.join("gone.tmp"),
             &p.worktree.join("gone.tmp"),
             Path::new("build/gone.tmp"),
             file_type,
+            (0, 0),
             &mut report,
         )
         .unwrap();
@@ -751,6 +759,196 @@ mod tests {
 
         assert_eq!(report.skipped_special, vec!["run/pipe"]);
         assert!(!p.worktree.join("run/pipe").exists());
+    }
+
+    /// Restores the mode on drop so the tempdir can still be cleaned up.
+    struct Locked(PathBuf);
+
+    impl Locked {
+        fn new(path: PathBuf, mode: u32) -> Self {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for Locked {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+
+    #[test]
+    fn a_flat_directory_over_the_file_limit_is_skipped() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("dist")).unwrap();
+        for name in ["a.js", "b.js", "c.js"] {
+            std::fs::write(p.main.join("dist").join(name), "").unwrap();
+        }
+
+        let report = copy_files(&p.main, &p.worktree, &entries(&["dist"]), 1).unwrap();
+
+        assert_eq!(report.skipped_too_large, vec!["dist"]);
+    }
+
+    #[test]
+    fn a_missing_worktree_is_an_error() {
+        let p = pair();
+        let missing = p.worktree.join("gone");
+        assert!(copy_files(&p.main, &missing, &entries(&[".env"]), DEFAULT_MAX_FILES).is_err());
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_written_fails_the_run() {
+        let p = pair();
+        std::fs::write(p.main.join(".env"), "TOKEN=main").unwrap();
+        let _locked = Locked::new(p.worktree.clone(), 0o555);
+
+        assert!(copy_files(&p.main, &p.worktree, &entries(&[".env"]), DEFAULT_MAX_FILES).is_err());
+    }
+
+    #[test]
+    fn a_parent_directory_that_cannot_be_created_fails_the_run() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("config")).unwrap();
+        std::fs::write(p.main.join("config/secrets.yml"), "").unwrap();
+        let _locked = Locked::new(p.worktree.clone(), 0o555);
+
+        let result = copy_files(
+            &p.main,
+            &p.worktree,
+            &entries(&["config/secrets.yml"]),
+            DEFAULT_MAX_FILES,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_nested_directory_that_cannot_be_created_fails_the_run() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("config/nested")).unwrap();
+        std::fs::write(p.main.join("config/nested/secrets.yml"), "").unwrap();
+        std::fs::create_dir_all(p.worktree.join("config")).unwrap();
+        let _locked = Locked::new(p.worktree.join("config"), 0o555);
+
+        assert!(
+            copy_files(
+                &p.main,
+                &p.worktree,
+                &entries(&["config"]),
+                DEFAULT_MAX_FILES
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn a_file_inside_a_directory_that_cannot_be_written_fails_the_run() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("config")).unwrap();
+        std::fs::write(p.main.join("config/secrets.yml"), "").unwrap();
+        std::fs::create_dir_all(p.worktree.join("config")).unwrap();
+        let _locked = Locked::new(p.worktree.join("config"), 0o555);
+
+        assert!(
+            copy_files(
+                &p.main,
+                &p.worktree,
+                &entries(&["config"]),
+                DEFAULT_MAX_FILES
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn an_unreadable_source_directory_fails_the_run() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join("config/locked")).unwrap();
+        let _locked = Locked::new(p.main.join("config/locked"), 0o000);
+
+        assert!(
+            copy_files(
+                &p.main,
+                &p.worktree,
+                &entries(&["config"]),
+                DEFAULT_MAX_FILES
+            )
+            .is_err()
+        );
+        assert!(!p.worktree.join("config").exists());
+    }
+
+    #[test]
+    fn a_directory_that_vanished_after_listing_is_reported_as_missing() {
+        let p = pair();
+        let file_type = std::fs::metadata(&p.main).unwrap().file_type();
+        let mut report = CopyReport::default();
+
+        seed(
+            &p.main.join("gone"),
+            &p.worktree.join("gone"),
+            Path::new("build/gone"),
+            file_type,
+            (0, 0),
+            &mut report,
+        )
+        .unwrap();
+
+        assert_eq!(report.missing_source, vec!["build/gone"]);
+    }
+
+    #[test]
+    fn a_symlink_that_vanished_after_listing_is_reported_as_missing() {
+        let p = pair();
+        std::os::unix::fs::symlink("target", p.main.join("link")).unwrap();
+        let file_type = std::fs::symlink_metadata(p.main.join("link"))
+            .unwrap()
+            .file_type();
+        let mut report = CopyReport::default();
+
+        seed(
+            &p.main.join("gone"),
+            &p.worktree.join("gone"),
+            Path::new("gone"),
+            file_type,
+            (0, 0),
+            &mut report,
+        )
+        .unwrap();
+
+        assert_eq!(report.missing_source, vec!["gone"]);
+    }
+
+    #[test]
+    fn a_directory_that_vanished_while_counting_counts_as_empty() {
+        let p = pair();
+        let mut count = 0;
+
+        count_files(&p.main.join("gone"), DEFAULT_MAX_FILES, (0, 0), &mut count).unwrap();
+
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn a_symlink_that_cannot_be_created_fails_the_run() {
+        let p = pair();
+        std::fs::create_dir_all(p.main.join(".venv")).unwrap();
+        std::os::unix::fs::symlink("/usr/bin/python3", p.main.join(".venv/python")).unwrap();
+        std::fs::create_dir_all(p.worktree.join(".venv")).unwrap();
+        let _locked = Locked::new(p.worktree.join(".venv"), 0o555);
+
+        assert!(
+            copy_files(
+                &p.main,
+                &p.worktree,
+                &entries(&[".venv"]),
+                DEFAULT_MAX_FILES
+            )
+            .is_err()
+        );
     }
 
     #[test]
