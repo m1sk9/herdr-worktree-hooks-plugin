@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.0...v0.2.1) (2026-10-09)
+
+
+### Miscellaneous
+
+* **deps:** update rust crate toml to v1.1.7 ([#18](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/18)) ([659e113](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/659e113478f321f41ce7aaafd5cb59a05c5ce354))
+* **deps:** update rust crate toml to v1.1.8 ([#20](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/20)) ([e88dee1](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/e88dee1aef04edcc2d73743f1a161380b1e8236b))
+
 ## [0.2.0](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.3...v0.2.0) (2026-10-01)
 
 
