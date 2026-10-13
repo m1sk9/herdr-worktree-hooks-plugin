@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.2.1](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.0...v0.2.1) (2026-10-11)
+
+
+### Miscellaneous
+
+* **deps:** update rust crate serde_json to v1.0.152 ([#21](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/21)) ([d396239](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/d396239380a8b9d61041c0b85afbdb233f140da2))
+* **deps:** update rust crate serde_json to v1.0.154 ([#22](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/22)) ([0f388ec](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/0f388ec5a94645e6c5dc81e5e8c4a23599e161b3))
+* **deps:** update rust crate toml to v1.1.7 ([#18](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/18)) ([659e113](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/659e113478f321f41ce7aaafd5cb59a05c5ce354))
+* **deps:** update rust crate toml to v1.1.8 ([#20](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/20)) ([e88dee1](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/e88dee1aef04edcc2d73743f1a161380b1e8236b))
+
 ## [0.2.0](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.1.3...v0.2.0) (2026-10-01)
 
 
