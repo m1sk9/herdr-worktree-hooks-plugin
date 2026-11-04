@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.1...v0.2.2) (2026-11-04)
+
+
+### Miscellaneous
+
+* **deps:** update rust crate toml to v1.2.0 ([#25](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/25)) ([855c1bc](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/855c1bc6c0f2e25f6a2780c077d576af5094f2ff))
+* **deps:** update swatinem/rust-cache action to v2.9.3 ([#23](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/23)) ([fdd65df](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/fdd65df81ee4d1b30c83ae6eaf22eb4727c9c9c8))
+
 ## [0.2.1](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.0...v0.2.1) (2026-10-11)
 
 
