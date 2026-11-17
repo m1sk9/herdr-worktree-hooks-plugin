@@ -150,9 +150,8 @@ mod tests {
 
         // Without a birth time the filesystem may hand back the same inode,
         // and then the checkouts are indistinguishable by design.
-        if checkout_identity(Path::new(&checkout)).unwrap() != before {
-            assert!(fx.store.try_acquire(&checkout).unwrap());
-        }
+        let recreated = checkout_identity(Path::new(&checkout)).unwrap() != before;
+        assert_eq!(fx.store.try_acquire(&checkout).unwrap(), recreated);
     }
 
     #[test]

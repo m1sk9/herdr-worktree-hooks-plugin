@@ -79,13 +79,13 @@ fn on_event() -> Result<(), String> {
         .try_acquire(&target.checkout_path)
         .map_err(|e| e.to_string())?
     {
-        let claim = store
-            .claim_path(&target.checkout_path)
-            .map_err(|e| e.to_string())?;
-        log!(
-            "skip: already applied to this worktree (claim: {})",
-            claim.display()
+        // Why not `?`: the checkout can vanish after the claim check, and that
+        // must not turn a skip into a failed run.
+        let claim = store.claim_path(&target.checkout_path).map_or_else(
+            |e| format!("unresolved: {e}"),
+            |path| path.display().to_string(),
         );
+        log!("skip: already applied to this worktree (claim: {claim})");
         return Ok(());
     }
 
@@ -107,7 +107,12 @@ fn seed() -> Result<(), String> {
         match store.try_acquire(&target.checkout_path) {
             Ok(true) => seeded += 1,
             Ok(false) => {}
-            Err(e) => log!("could not seed {}: {e}", target.checkout_path),
+            // Why only NotFound: a workspace can outlive its checkout, but any
+            // other error (e.g. an unwritable claim store) must fail the seed.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                log!("could not seed {}: {e}", target.checkout_path)
+            }
+            Err(e) => return Err(e.to_string()),
         }
     }
     log!(
