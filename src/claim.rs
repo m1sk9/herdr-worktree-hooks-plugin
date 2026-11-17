@@ -2,7 +2,7 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// One file per worktree checkout, created with `O_EXCL` so that overlapping
 /// events race on the filesystem instead of on a lock we would have to hold.
@@ -57,12 +57,18 @@ impl ClaimStore {
 /// by a recreated checkout, which degrades to a skip, never a double apply.
 fn checkout_identity(checkout: &Path) -> io::Result<String> {
     let metadata = fs::metadata(checkout)?;
-    let birth = metadata
-        .created()
-        .ok()
+    Ok(identity_of(
+        metadata.dev(),
+        metadata.ino(),
+        metadata.created().ok(),
+    ))
+}
+
+fn identity_of(dev: u64, ino: u64, birth: Option<SystemTime>) -> String {
+    let birth = birth
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or_else(|| "-".to_string(), |d| d.as_nanos().to_string());
-    Ok(format!("{}:{}:{birth}", metadata.dev(), metadata.ino()))
+    format!("{dev}:{ino}:{birth}")
 }
 
 /// Why not a plain sanitized path: distinct checkouts can sanitize to the same
@@ -189,6 +195,21 @@ mod tests {
         let checkout = fx.checkout("feat-x");
         fs::create_dir(fx.store.claim_path(&checkout).unwrap()).unwrap();
         assert!(fx.store.release(&checkout).is_err());
+    }
+
+    #[test]
+    fn a_missing_checkout_cannot_be_released() {
+        let fx = Fixture::new();
+        assert!(fx.store.release("/nonexistent/worktree").is_err());
+    }
+
+    #[test]
+    fn without_a_birth_time_the_identity_falls_back_to_device_and_inode() {
+        assert_eq!(identity_of(1, 2, None), "1:2:-");
+        assert_ne!(
+            identity_of(1, 2, None),
+            identity_of(1, 2, Some(UNIX_EPOCH + std::time::Duration::from_nanos(5)))
+        );
     }
 
     #[test]
