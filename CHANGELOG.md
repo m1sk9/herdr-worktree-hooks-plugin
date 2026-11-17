@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.3](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.2...v0.2.3) (2026-11-17)
+
+
+### Bug Fixes
+
+* re-apply hooks to a worktree recreated at the same path ([#33](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/33)) ([328a3cb](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/328a3cb5380cb267f5a78da79986ac424cf5af1e))
+
+
+### Miscellaneous
+
+* **deps:** update rust crate toml to v1.2.1 ([#26](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/26)) ([7092a54](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/7092a54d6a53a7ac2300b68727b3175488bf196b))
+
 ## [0.2.2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.1...v0.2.2) (2026-11-04)
 
 
