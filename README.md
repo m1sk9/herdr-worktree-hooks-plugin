@@ -100,6 +100,7 @@ Two guards keep repeat firings harmless:
 2. Outside of `worktree.created`, the checkout must have been created within `fresh_window_secs` (default 300) — otherwise opening an *existing* worktree, which also emits `workspace.created`, would look like a new one.
 
 Each worktree is then claimed with an `O_EXCL` file under `$HERDR_PLUGIN_STATE_DIR/claims/` (on macOS, `~/.local/state/herdr/plugins/m1sk9.worktree-hooks/claims/`). The first event wins; the rest log a skip.
+The claim is keyed by the checkout's path and its filesystem identity (device, inode and, where available, creation time), so a worktree removed and recreated at the same path is treated as new. On Linux the creation time is not available, so a recreated checkout that happens to reuse the old inode is still skipped; use **Apply worktree hooks** below in that case.
 
 Only `worktree.created` reports the branch, so `$BRANCH` is read back with `git rev-parse` when the winning event did not carry it.
 

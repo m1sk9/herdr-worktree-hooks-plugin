@@ -79,7 +79,13 @@ fn on_event() -> Result<(), String> {
         .try_acquire(&target.checkout_path)
         .map_err(|e| e.to_string())?
     {
-        log!("skip: already applied to this worktree");
+        let claim = store
+            .claim_path(&target.checkout_path)
+            .map_err(|e| e.to_string())?;
+        log!(
+            "skip: already applied to this worktree (claim: {})",
+            claim.display()
+        );
         return Ok(());
     }
 
@@ -98,11 +104,10 @@ fn seed() -> Result<(), String> {
 
     let mut seeded = 0;
     for target in targets.iter().filter(|t| t.is_linked_worktree) {
-        if store
-            .try_acquire(&target.checkout_path)
-            .map_err(|e| e.to_string())?
-        {
-            seeded += 1;
+        match store.try_acquire(&target.checkout_path) {
+            Ok(true) => seeded += 1,
+            Ok(false) => {}
+            Err(e) => log!("could not seed {}: {e}", target.checkout_path),
         }
     }
     log!(
