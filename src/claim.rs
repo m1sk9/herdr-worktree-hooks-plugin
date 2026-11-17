@@ -176,6 +176,22 @@ mod tests {
     }
 
     #[test]
+    fn an_unwritable_claim_store_is_reported_instead_of_read_as_already_claimed() {
+        let fx = Fixture::new();
+        let checkout = fx.checkout("feat-x");
+        fs::remove_dir(&fx.store.dir).unwrap();
+        assert!(fx.store.try_acquire(&checkout).is_err());
+    }
+
+    #[test]
+    fn a_claim_that_cannot_be_removed_is_reported_on_release() {
+        let fx = Fixture::new();
+        let checkout = fx.checkout("feat-x");
+        fs::create_dir(fx.store.claim_path(&checkout).unwrap()).unwrap();
+        assert!(fx.store.release(&checkout).is_err());
+    }
+
+    #[test]
     fn checkouts_that_sanitize_alike_still_claim_independently() {
         let fx = Fixture::new();
         let nested = fx.checkout("a/b");
