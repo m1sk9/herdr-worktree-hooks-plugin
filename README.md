@@ -40,6 +40,14 @@ herdr plugin action invoke m1sk9.worktree-hooks.seed
 
 The `seed` action is needed after linking because the `[[startup]]` hook only runs at session start — without it, worktrees that already exist stay unclaimed until herdr restarts.
 
+End-to-end tests drive a real herdr server. Each test starts its own server under a throwaway `HOME`, so running them inside a herdr session leaves that session alone:
+
+```
+cargo test --test e2e -- --ignored
+```
+
+They use `herdr` from `PATH`; set `HERDR_E2E_BIN` to test against another binary.
+
 ## Configure
 
 ```
