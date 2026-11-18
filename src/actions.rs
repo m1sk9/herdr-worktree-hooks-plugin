@@ -299,15 +299,8 @@ pub fn run_commands(
     commands: &[String],
 ) -> Result<(), String> {
     for command in commands {
-        let status = Command::new(shell)
-            .arg("-c")
-            .arg(command)
+        let status = shell_command(shell, target, event, command)
             .current_dir(&target.checkout_path)
-            .env("MAIN", &target.repo_root)
-            .env("WORKTREE", &target.checkout_path)
-            .env("REPO", &target.repo_name)
-            .env("BRANCH", target.branch.clone().unwrap_or_default())
-            .env("EVENT", event)
             .status()
             .map_err(|e| format!("{shell} -c {command:?}: {e}"))?;
 
@@ -316,6 +309,52 @@ pub fn run_commands(
         }
     }
     Ok(())
+}
+
+/// Why not the worktree as the working directory: it is already gone, and
+/// spawning into a missing directory fails before the command even starts.
+/// Why not stop at the first failure: nothing retries a removal, so a command
+/// skipped here would never run at all.
+/// Why not fall back to another directory when the main checkout is missing: a
+/// relative path such as `rm -rf target/cache` would then hit files the user
+/// never pointed it at.
+pub fn run_cleanup(
+    shell: &str,
+    target: &WorktreeTarget,
+    event: &str,
+    commands: &[String],
+) -> Result<Vec<String>, String> {
+    if !Path::new(&target.repo_root).is_dir() {
+        return Err(format!(
+            "main checkout {} is not a directory; skipped {} cleanup command(s)",
+            target.repo_root,
+            commands.len()
+        ));
+    }
+    let mut failures = Vec::new();
+    for command in commands {
+        match shell_command(shell, target, event, command)
+            .current_dir(&target.repo_root)
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => failures.push(format!("{command:?} exited with {status}")),
+            Err(e) => failures.push(format!("{shell} -c {command:?}: {e}")),
+        }
+    }
+    Ok(failures)
+}
+
+fn shell_command(shell: &str, target: &WorktreeTarget, event: &str, command: &str) -> Command {
+    let mut cmd = Command::new(shell);
+    cmd.arg("-c")
+        .arg(command)
+        .env("MAIN", &target.repo_root)
+        .env("WORKTREE", &target.checkout_path)
+        .env("REPO", &target.repo_name)
+        .env("BRANCH", target.branch.clone().unwrap_or_default())
+        .env("EVENT", event);
+    cmd
 }
 
 /// Only `worktree.created` carries the branch, and which of the concurrent
@@ -1036,5 +1075,89 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!p.worktree.join("should-not-exist").exists());
+    }
+
+    #[test]
+    fn cleanup_runs_in_the_main_checkout_when_the_worktree_is_gone() {
+        let p = pair();
+        std::fs::remove_dir(&p.worktree).unwrap();
+        let target = WorktreeTarget {
+            repo_name: "my-app".to_string(),
+            repo_root: p.main.to_string_lossy().to_string(),
+            checkout_path: p.worktree.to_string_lossy().to_string(),
+            is_linked_worktree: true,
+            branch: Some("feat/x".to_string()),
+        };
+
+        let failures = run_cleanup(
+            "/bin/sh",
+            &target,
+            "worktree.removed",
+            &entries(&[
+                "printf '%s %s %s %s' \"$WORKTREE\" \"$REPO\" \"$BRANCH\" \"$EVENT\" > marker; pwd > cwd",
+            ]),
+        )
+        .unwrap();
+
+        assert!(failures.is_empty(), "{failures:?}");
+        assert_eq!(
+            std::fs::read_to_string(p.main.join("marker")).unwrap(),
+            format!(
+                "{} my-app feat/x worktree.removed",
+                p.worktree.to_string_lossy()
+            )
+        );
+        assert!(
+            std::fs::read_to_string(p.main.join("cwd"))
+                .unwrap()
+                .trim()
+                .ends_with("main")
+        );
+    }
+
+    #[test]
+    fn a_failing_cleanup_command_does_not_stop_the_rest() {
+        let p = pair();
+        let target = WorktreeTarget {
+            repo_name: "my-app".to_string(),
+            repo_root: p.main.to_string_lossy().to_string(),
+            checkout_path: p.worktree.to_string_lossy().to_string(),
+            is_linked_worktree: true,
+            branch: None,
+        };
+
+        let failures = run_cleanup(
+            "/bin/sh",
+            &target,
+            "worktree.removed",
+            &entries(&["exit 3", "touch ran-anyway"]),
+        )
+        .unwrap();
+
+        assert_eq!(failures.len(), 1, "{failures:?}");
+        assert!(p.main.join("ran-anyway").exists());
+    }
+
+    #[test]
+    fn cleanup_without_a_main_checkout_runs_nothing_and_fails() {
+        let p = pair();
+        let marker = p.worktree.join("marker");
+        let target = WorktreeTarget {
+            repo_name: "my-app".to_string(),
+            repo_root: p.main.join("missing").to_string_lossy().to_string(),
+            checkout_path: p.worktree.join("gone").to_string_lossy().to_string(),
+            is_linked_worktree: true,
+            branch: None,
+        };
+
+        let result = run_cleanup(
+            "/bin/sh",
+            &target,
+            "worktree.removed",
+            &entries(&[&format!("touch '{}'", marker.to_string_lossy())]),
+        );
+
+        assert!(result.is_err(), "{result:?}");
+        assert!(!marker.exists());
     }
 }

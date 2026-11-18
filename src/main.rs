@@ -14,6 +14,7 @@ use event::WorktreeTarget;
 /// The event that unambiguously means "this worktree did not exist a moment
 /// ago". Every other subscribed event needs the freshness guard.
 const CREATED_EVENT: &str = "worktree.created";
+const REMOVED_EVENT: &str = "worktree.removed";
 
 macro_rules! log {
     ($($arg:tt)*) => { println!("[worktree-hooks] {}", format!($($arg)*)) };
@@ -30,6 +31,7 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None | Some("on-event") => on_event(),
+        Some("on-removed") => on_removed(),
         Some("seed") => seed(),
         Some("apply") => apply(args.iter().any(|a| a == "--force")),
         Some(other) => Err(format!("unknown subcommand {other:?}")),
@@ -52,13 +54,7 @@ fn on_event() -> Result<(), String> {
         log!("event={event_name} no worktree in scope");
         return Ok(());
     };
-    log!(
-        "event={event_name} checkout={} repo_root={} event_branch={} linked={}",
-        target.checkout_path,
-        target.repo_root,
-        target.branch.as_deref().unwrap_or("-"),
-        target.is_linked_worktree
-    );
+    log_target(&event_name, &target);
 
     if !target.is_linked_worktree {
         log!("skip: main checkout, not a linked worktree");
@@ -93,6 +89,55 @@ fn on_event() -> Result<(), String> {
         let _ = store.release(&target.checkout_path);
         log!("released the claim so the next event retries");
     })
+}
+
+/// Why not through `on_event`: the checkout is already gone, so neither the
+/// freshness check nor the claim can stat it, and the closed workspace can no
+/// longer be fetched back from herdr.
+fn on_removed() -> Result<(), String> {
+    let Some(target) = parse_payload().as_ref().and_then(event::find_target) else {
+        log!("event={REMOVED_EVENT} no worktree provenance in the payload; nothing to clean up");
+        return Ok(());
+    };
+    log_target(REMOVED_EVENT, &target);
+
+    if !target.is_linked_worktree {
+        log!("skip: main checkout, not a linked worktree");
+        return Ok(());
+    }
+
+    let config = Config::load(env_path("HERDR_PLUGIN_CONFIG_DIR").as_deref())?;
+    let resolved = config.resolve(&target.repo_name, &target.repo_root);
+    if resolved.cleanup.is_empty() {
+        log!("no cleanup commands configured");
+        return Ok(());
+    }
+
+    log!("running {} cleanup command(s)", resolved.cleanup.len());
+    let failures =
+        actions::run_cleanup(&config.shell(), &target, REMOVED_EVENT, &resolved.cleanup)?;
+    for failure in &failures {
+        log!("cleanup failed: {failure}");
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} of {} cleanup command(s) failed",
+            failures.len(),
+            resolved.cleanup.len()
+        ))
+    }
+}
+
+fn log_target(event_name: &str, target: &WorktreeTarget) {
+    log!(
+        "event={event_name} checkout={} repo_root={} event_branch={} linked={}",
+        target.checkout_path,
+        target.repo_root,
+        target.branch.as_deref().unwrap_or("-"),
+        target.is_linked_worktree
+    );
 }
 
 /// Runs once per session before any worktree can be created, marking everything

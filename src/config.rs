@@ -25,6 +25,8 @@ pub struct Section {
     pub copy: Vec<String>,
     #[serde(default)]
     pub run: Vec<String>,
+    #[serde(default)]
+    pub cleanup: Vec<String>,
     pub max_files: Option<usize>,
     pub inherit: Option<bool>,
 }
@@ -34,6 +36,7 @@ pub struct Section {
 pub struct Resolved {
     pub copy: Vec<String>,
     pub run: Vec<String>,
+    pub cleanup: Vec<String>,
     pub max_files: usize,
 }
 
@@ -68,6 +71,7 @@ impl Config {
         let defaults = self.defaults.clone().unwrap_or_else(|| Section {
             copy: BUILTIN_COPY.iter().map(|s| s.to_string()).collect(),
             run: Vec::new(),
+            cleanup: Vec::new(),
             max_files: None,
             inherit: None,
         });
@@ -76,6 +80,7 @@ impl Config {
             return Resolved {
                 copy: dedup(defaults.copy),
                 run: dedup(defaults.run),
+                cleanup: dedup(defaults.cleanup),
                 max_files: defaults.max_files.unwrap_or(DEFAULT_MAX_FILES),
             };
         };
@@ -84,6 +89,7 @@ impl Config {
             return Resolved {
                 copy: dedup(section.copy.clone()),
                 run: dedup(section.run.clone()),
+                cleanup: dedup(section.cleanup.clone()),
                 max_files: section.max_files.unwrap_or(DEFAULT_MAX_FILES),
             };
         }
@@ -91,6 +97,7 @@ impl Config {
         Resolved {
             copy: dedup([defaults.copy, section.copy.clone()].concat()),
             run: dedup([defaults.run, section.run.clone()].concat()),
+            cleanup: dedup([defaults.cleanup, section.cleanup.clone()].concat()),
             max_files: section
                 .max_files
                 .or(defaults.max_files)
@@ -180,6 +187,33 @@ mod tests {
              [repos.my-app]\ninherit = false\ncopy = [\".env.test\"]\n",
         );
         assert_eq!(config.resolve("my-app", "/repo").copy, vec![".env.test"]);
+    }
+
+    #[test]
+    fn cleanup_is_empty_without_configuration() {
+        let config = Config::default();
+        assert!(config.resolve("my-app", "/repo").cleanup.is_empty());
+    }
+
+    #[test]
+    fn repo_cleanup_appends_to_defaults_without_duplicates() {
+        let config = parse(
+            "[defaults]\ncleanup = [\"echo a\"]\n\
+             [repos.my-app]\ncleanup = [\"echo a\", \"echo b\"]\n",
+        );
+        assert_eq!(
+            config.resolve("my-app", "/repo").cleanup,
+            vec!["echo a", "echo b"]
+        );
+    }
+
+    #[test]
+    fn inherit_false_drops_default_cleanup() {
+        let config = parse(
+            "[defaults]\ncleanup = [\"echo a\"]\n\
+             [repos.my-app]\ninherit = false\ncleanup = [\"echo b\"]\n",
+        );
+        assert_eq!(config.resolve("my-app", "/repo").cleanup, vec!["echo b"]);
     }
 
     #[test]
