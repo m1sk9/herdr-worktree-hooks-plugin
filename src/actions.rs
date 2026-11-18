@@ -311,9 +311,6 @@ pub fn run_commands(
     Ok(())
 }
 
-/// Runs every command and returns one message per failure; empty means all
-/// succeeded.
-///
 /// Why not the worktree as the working directory: it is already gone, and
 /// spawning into a missing directory fails before the command even starts.
 /// Why not stop at the first failure: nothing retries a removal, so a command
