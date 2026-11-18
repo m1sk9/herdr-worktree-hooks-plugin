@@ -104,6 +104,7 @@ Shell command strings executed in order after herdr has removed a worktree, for 
 | Variable | Value |
 | --- | --- |
 | `WORKTREE` | the removed worktree's path, which no longer exists |
+| `BRANCH` | the branch from the removal event, empty if detached; it cannot be read back from the deleted checkout, so guard paths built from it (`test -n "$BRANCH" && ...`) |
 | `EVENT` | `worktree.removed` |
 
 The working directory is the main checkout. `[repos.*]` entries are appended to `[defaults]` exactly like `run`.

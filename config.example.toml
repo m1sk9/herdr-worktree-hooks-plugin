@@ -44,7 +44,7 @@ cleanup = []
 # [repos.my-app]
 # copy = [".env.test", "config/secrets.yml"]
 # run = ["pnpm install --frozen-lockfile"]
-# cleanup = ["rm -rf ~/.cache/my-app/$BRANCH"]
+# cleanup = ['test -n "$BRANCH" && rm -rf ~/.cache/my-app/$BRANCH']  # an empty $BRANCH would remove the whole cache
 
 # [repos."/path/to/checkouts/other-app"]
 # inherit = false          # start from an empty list instead of [defaults]
