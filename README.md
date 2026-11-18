@@ -107,7 +107,7 @@ Shell command strings executed in order after herdr has removed a worktree, for 
 | `BRANCH` | the branch from the removal event, empty if detached; it cannot be read back from the deleted checkout, so guard paths built from it (`test -n "$BRANCH" && ...`) |
 | `EVENT` | `worktree.removed` |
 
-The working directory is the main checkout. `[repos.*]` entries are appended to `[defaults]` exactly like `run`.
+The working directory is the main checkout. If the main checkout no longer exists, no cleanup command runs and the run fails, because relative paths would otherwise resolve somewhere unintended. `[repos.*]` entries are appended to `[defaults]` exactly like `run`.
 
 A failing command is logged and the remaining ones still run; the run then exits non-zero so the failure shows up in `herdr plugin log list`. The removal itself has already happened and is not undone.
 

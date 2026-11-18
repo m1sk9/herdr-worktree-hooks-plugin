@@ -114,7 +114,8 @@ fn on_removed() -> Result<(), String> {
     }
 
     log!("running {} cleanup command(s)", resolved.cleanup.len());
-    let failures = actions::run_cleanup(&config.shell(), &target, REMOVED_EVENT, &resolved.cleanup);
+    let failures =
+        actions::run_cleanup(&config.shell(), &target, REMOVED_EVENT, &resolved.cleanup)?;
     for failure in &failures {
         log!("cleanup failed: {failure}");
     }

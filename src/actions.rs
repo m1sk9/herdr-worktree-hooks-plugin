@@ -315,26 +315,34 @@ pub fn run_commands(
 /// spawning into a missing directory fails before the command even starts.
 /// Why not stop at the first failure: nothing retries a removal, so a command
 /// skipped here would never run at all.
+/// Why not fall back to another directory when the main checkout is missing: a
+/// relative path such as `rm -rf target/cache` would then hit files the user
+/// never pointed it at.
 pub fn run_cleanup(
     shell: &str,
     target: &WorktreeTarget,
     event: &str,
     commands: &[String],
-) -> Vec<String> {
-    let main_exists = Path::new(&target.repo_root).is_dir();
+) -> Result<Vec<String>, String> {
+    if !Path::new(&target.repo_root).is_dir() {
+        return Err(format!(
+            "main checkout {} is not a directory; skipped {} cleanup command(s)",
+            target.repo_root,
+            commands.len()
+        ));
+    }
     let mut failures = Vec::new();
     for command in commands {
-        let mut cmd = shell_command(shell, target, event, command);
-        if main_exists {
-            cmd.current_dir(&target.repo_root);
-        }
-        match cmd.status() {
+        match shell_command(shell, target, event, command)
+            .current_dir(&target.repo_root)
+            .status()
+        {
             Ok(status) if status.success() => {}
             Ok(status) => failures.push(format!("{command:?} exited with {status}")),
             Err(e) => failures.push(format!("{shell} -c {command:?}: {e}")),
         }
     }
-    failures
+    Ok(failures)
 }
 
 fn shell_command(shell: &str, target: &WorktreeTarget, event: &str, command: &str) -> Command {
@@ -1088,7 +1096,8 @@ mod tests {
             &entries(&[
                 "printf '%s %s %s %s' \"$WORKTREE\" \"$REPO\" \"$BRANCH\" \"$EVENT\" > marker; pwd > cwd",
             ]),
-        );
+        )
+        .unwrap();
 
         assert!(failures.is_empty(), "{failures:?}");
         assert_eq!(
@@ -1122,14 +1131,15 @@ mod tests {
             &target,
             "worktree.removed",
             &entries(&["exit 3", "touch ran-anyway"]),
-        );
+        )
+        .unwrap();
 
         assert_eq!(failures.len(), 1, "{failures:?}");
         assert!(p.main.join("ran-anyway").exists());
     }
 
     #[test]
-    fn cleanup_without_a_main_checkout_still_runs() {
+    fn cleanup_without_a_main_checkout_runs_nothing_and_fails() {
         let p = pair();
         let marker = p.worktree.join("marker");
         let target = WorktreeTarget {
@@ -1140,14 +1150,14 @@ mod tests {
             branch: None,
         };
 
-        let failures = run_cleanup(
+        let result = run_cleanup(
             "/bin/sh",
             &target,
             "worktree.removed",
             &entries(&[&format!("touch '{}'", marker.to_string_lossy())]),
         );
 
-        assert!(failures.is_empty(), "{failures:?}");
-        assert!(marker.exists());
+        assert!(result.is_err(), "{result:?}");
+        assert!(!marker.exists());
     }
 }
