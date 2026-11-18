@@ -537,4 +537,9 @@ cleanup = [
         fs::canonicalize(&repo).unwrap()
     );
     assert!(!worktree.exists());
+    herdr.wait_until("the failed cleanup command is logged", || {
+        !herdr
+            .runs_mentioning("cleanup failed: \"exit 3\"")
+            .is_empty()
+    });
 }
