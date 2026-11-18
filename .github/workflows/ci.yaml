@@ -84,6 +84,44 @@ jobs:
           files: codecov.json
           fail_ci_if_error: true
 
+  # Unit tests fake herdr's payloads; only a real server shows which events it
+  # actually emits, with which paths, and in what order.
+  e2e:
+    runs-on: ubuntu-24.04
+    needs: check
+    # Why pinned rather than the latest release: a herdr release alone must not
+    # turn unrelated pull requests red. Renovate bumps both lines together (see
+    # .github/renovate.json), so they must stay adjacent and in this order.
+    # Why pin the digest: herdr publishes no checksum files, and this
+    # third-party binary is executed on every pull request.
+    env:
+      HERDR_VERSION: v0.9.5
+      HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup cache
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          prefix-key: "herdr-worktree-hooks-plugin/gh-actions-cache"
+
+      - name: Install herdr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$HERDR_VERSION" --repo herdrdev/herdr --pattern herdr-linux-x86_64 --output "$RUNNER_TEMP/herdr"
+          echo "$HERDR_SHA256  $RUNNER_TEMP/herdr" | sha256sum --check -
+          chmod +x "$RUNNER_TEMP/herdr"
+
+      - name: Run E2E tests
+        env:
+          HERDR_E2E_BIN: ${{ runner.temp }}/herdr
+        run: cargo test --test e2e -- --ignored
+
   # `herdr plugin install` no longer compiles anything on the user's machine —
   # scripts/install.sh downloads a prebuilt archive instead (see release.yaml's
   # `assets` job), so this job's role shifted: guard that every target that
