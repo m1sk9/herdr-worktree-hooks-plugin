@@ -2,5 +2,17 @@
     "$schema": "https://docs.renovatebot.com/renovate-schema.json",
     "extends": [
         "github>m1sk9/renovate-config"
+    ],
+    "customManagers": [
+        {
+            "description": "herdr binary used by the e2e job; the digest is recomputed from the release asset",
+            "customType": "regex",
+            "managerFilePatterns": ["/^\\.github/workflows/ci\\.yaml$/"],
+            "matchStrings": [
+                "HERDR_VERSION: (?<currentValue>v\\S+)\\s+HERDR_SHA256: (?<currentDigest>[0-9a-f]{64})"
+            ],
+            "datasourceTemplate": "github-release-attachments",
+            "depNameTemplate": "herdrdev/herdr"
+        }
     ]
 }

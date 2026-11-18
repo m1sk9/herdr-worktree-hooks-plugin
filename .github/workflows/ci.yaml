@@ -89,10 +89,13 @@ jobs:
   e2e:
     runs-on: ubuntu-24.04
     needs: check
+    # Why pinned rather than the latest release: a herdr release alone must not
+    # turn unrelated pull requests red. Renovate bumps both lines together (see
+    # .github/renovate.json), so they must stay adjacent and in this order.
+    # Why pin the digest: herdr publishes no checksum files, and this
+    # third-party binary is executed on every pull request.
     env:
       HERDR_VERSION: v0.9.5
-      # Why pin the digest: herdr publishes no checksum files, and this
-      # third-party binary is executed on every pull request.
       HERDR_SHA256: 14d9e8bc8b4a9e0118d77c32266f76d461f09b40342eb23752960bd89f59929d
     steps:
       - name: Checkout
