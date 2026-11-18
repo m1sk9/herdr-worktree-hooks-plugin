@@ -5,7 +5,7 @@
 [![Apache License 2.0](https://img.shields.io/github/license/m1sk9/herdr-worktree-hooks-plugin?color=%239944ee)](https://github.com/m1sk9/herdr-worktree-hooks-plugin/blob/main/LICENSE)
 [![codecov](https://codecov.io/github/m1sk9/herdr-worktree-hooks-plugin/graph/badge.svg?token=QA075J11S8)](https://codecov.io/github/m1sk9/herdr-worktree-hooks-plugin)
 
-A [herdr](https://herdr.dev) plugin that seeds a newly created git worktree from its main checkout: it copies gitignored files such as `.env` and then runs any setup commands you configure.
+A [herdr](https://herdr.dev) plugin that seeds a newly created git worktree from its main checkout: it copies gitignored files such as `.env` and then runs any setup commands you configure. When herdr removes the worktree, it runs any cleanup commands you configure.
 
 ```shell
 herdr plugin install m1sk9/herdr-worktree-hooks-plugin
@@ -97,6 +97,21 @@ Shell command strings executed in the new worktree, in order, with:
 
 A non-zero exit fails the run and releases the claim, so the next event retries.
 
+### `cleanup`
+
+Shell command strings executed in order after herdr has removed a worktree, for undoing what the worktree left outside itself (caches, per-path registrations, and so on). They get the same variables as `run`, except:
+
+| Variable | Value |
+| --- | --- |
+| `WORKTREE` | the removed worktree's path, which no longer exists |
+| `EVENT` | `worktree.removed` |
+
+The working directory is the main checkout. `[repos.*]` entries are appended to `[defaults]` exactly like `run`.
+
+A failing command is logged and the remaining ones still run; the run then exits non-zero so the failure shows up in `herdr plugin log list`. The removal itself has already happened and is not undone.
+
+Cleanup only follows a removal done through herdr (the sidebar's delete or `herdr worktree remove`), which emits `worktree.removed`. Running `git worktree remove` yourself, or merely closing the workspace, does not trigger it.
+
 ## How it decides to run
 
 The plugin subscribes to `worktree.created` and `workspace.created`. On herdr 0.8.0 the sidebar's New Worktree emits both within the same millisecond, and which one arrives first is a race, so both are handled and the paths are taken from whichever payload the winner carries. A payload that names only a workspace
@@ -113,6 +128,8 @@ The claim is keyed by the checkout's path and its filesystem identity (device, i
 Only `worktree.created` reports the branch, so `$BRANCH` is read back with `git rev-parse` when the winning event did not carry it.
 
 The main checkout itself (`is_linked_worktree = false`) is always skipped.
+
+`worktree.removed` is handled separately: it fires exactly once per removal, so `cleanup` runs without the freshness window or a claim, and it runs even for worktrees the plugin never applied to.
 
 ## Re-running by hand
 
