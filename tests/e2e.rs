@@ -37,10 +37,10 @@ impl Herdr {
             .prefix("hde2e")
             .tempdir()
             .expect("create temp dir");
-        // Why canonicalize: herdr reports a checkout reopened by path in its
-        // canonical spelling (/private/var on macOS) but a created one as
-        // given, and the claim key is path-sensitive.
-        let root = fs::canonicalize(base.path()).unwrap();
+        // Why not canonicalize: on macOS the temp dir sits behind the /var
+        // symlink, and herdr reports a reopened checkout as /private/var but a
+        // created one as given, so both spellings of a checkout stay under test.
+        let root = base.path().to_path_buf();
         fs::create_dir_all(root.join("home")).unwrap();
         Self {
             _base: base,
@@ -442,7 +442,8 @@ fn worktrees_restored_at_startup_are_not_treated_as_new() {
         "--no-focus",
         "--trust-repository",
     ]);
-    let needle = checkout_marker(&worktree);
+    // herdr reports a reopened checkout with its symlinks resolved.
+    let needle = checkout_marker(&fs::canonicalize(&worktree).unwrap());
     herdr.wait_until("the reopened workspace's event is handled", || {
         !herdr.runs_mentioning(&needle).is_empty()
     });

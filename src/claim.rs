@@ -41,9 +41,15 @@ impl ClaimStore {
         }
     }
 
+    /// Why not the path as herdr reports it: herdr spells the same checkout
+    /// differently across events (a created worktree as given, a reopened one
+    /// with symlinks resolved), and each spelling would get its own claim.
     pub fn claim_path(&self, checkout_path: &str) -> io::Result<PathBuf> {
-        let identity = checkout_identity(Path::new(checkout_path))?;
-        Ok(self.dir.join(claim_file_name(checkout_path, &identity)))
+        let canonical = fs::canonicalize(checkout_path)?;
+        let identity = checkout_identity(&canonical)?;
+        Ok(self
+            .dir
+            .join(claim_file_name(&canonical.to_string_lossy(), &identity)))
     }
 }
 
@@ -158,6 +164,18 @@ mod tests {
         // and then the checkouts are indistinguishable by design.
         let recreated = checkout_identity(Path::new(&checkout)).unwrap() != before;
         assert_eq!(fx.store.try_acquire(&checkout).unwrap(), recreated);
+    }
+
+    #[test]
+    fn a_checkout_reached_through_a_symlink_shares_its_claim() {
+        let fx = Fixture::new();
+        let checkout = fx.checkout("real/feat-x");
+        let link = fx.root.path().join("link");
+        std::os::unix::fs::symlink(fx.root.path().join("real"), &link).unwrap();
+        let via_link = link.join("feat-x").to_string_lossy().into_owned();
+
+        assert!(fx.store.try_acquire(&via_link).unwrap());
+        assert!(!fx.store.try_acquire(&checkout).unwrap());
     }
 
     #[test]
