@@ -171,6 +171,57 @@ mod tests {
         assert!(target.is_linked_worktree);
     }
 
+    fn worktree_removed() -> Value {
+        json!({
+            "event": "worktree_removed",
+            "data": {
+                "type": "worktree_removed",
+                "workspace_id": "w2S",
+                "forced": false,
+                "workspace": {
+                    "workspace_id": "w2S",
+                    "label": "feat-x",
+                    "worktree": {
+                        "repo_key": "/home/dev/src/github.com/acme/my-app/.git",
+                        "repo_name": "my-app",
+                        "repo_root": "/home/dev/src/github.com/acme/my-app",
+                        "checkout_path": "/home/dev/src/worktrees/my-app/feat-x",
+                        "is_linked_worktree": true
+                    }
+                },
+                "worktree": {
+                    "path": "/home/dev/src/worktrees/my-app/feat-x",
+                    "branch": "feat/x",
+                    "is_bare": false,
+                    "is_detached": false,
+                    "is_linked_worktree": true,
+                    "is_prunable": false,
+                    "label": "my-app"
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn worktree_removed_payload_yields_the_removed_checkout_and_main() {
+        let target = find_target(&worktree_removed()).expect("target");
+        assert_eq!(
+            target.checkout_path,
+            "/home/dev/src/worktrees/my-app/feat-x"
+        );
+        assert_eq!(target.repo_root, "/home/dev/src/github.com/acme/my-app");
+        assert_eq!(target.repo_name, "my-app");
+        assert_eq!(target.branch.as_deref(), Some("feat/x"));
+        assert!(target.is_linked_worktree);
+    }
+
+    #[test]
+    fn worktree_removed_payload_without_a_workspace_snapshot_yields_nothing() {
+        let mut payload = worktree_removed();
+        payload["data"]["workspace"] = Value::Null;
+        assert_eq!(find_target(&payload), None);
+    }
+
     #[test]
     fn workspace_created_payload_without_branch_still_resolves_paths() {
         let payload = json!({

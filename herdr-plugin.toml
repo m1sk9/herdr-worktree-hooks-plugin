@@ -2,7 +2,7 @@ id = "m1sk9.worktree-hooks"
 name = "Worktree Hooks"
 version = "0.2.3" # x-release-please-version
 min_herdr_version = "0.8.0"
-description = "Copy gitignored files from the main checkout and run setup commands when a worktree is created"
+description = "Copy gitignored files from the main checkout and run setup commands when a worktree is created, and cleanup commands when it is removed"
 platforms = ["macos", "linux"]
 
 # Downloads the release's prebuilt binary instead of compiling locally, so
@@ -27,6 +27,12 @@ command = ["target/release/herdr-worktree-hooks-plugin", "on-event"]
 [[events]]
 on = "workspace.created"
 command = ["target/release/herdr-worktree-hooks-plugin", "on-event"]
+
+# Why not also workspace.closed: it fires for closes that leave the checkout
+# in place, and cleanup must only follow an actual removal.
+[[events]]
+on = "worktree.removed"
+command = ["target/release/herdr-worktree-hooks-plugin", "on-removed"]
 
 [[actions]]
 id = "apply"

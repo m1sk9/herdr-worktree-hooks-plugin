@@ -494,3 +494,47 @@ fn the_apply_action_reapplies_to_the_focused_worktree() {
 
     herdr.wait_until(".env is copied again", || worktree.join(".env").exists());
 }
+
+#[test]
+#[ignore = "needs a herdr binary; run with --ignored"]
+fn cleanup_commands_run_in_the_main_checkout_after_removal() {
+    let herdr = Herdr::start();
+    let repo = init_repo(&herdr, &[]);
+    let out = herdr.path("cleanup.out");
+    herdr.write_config(&format!(
+        r#"
+shell = "/bin/sh"
+
+[defaults]
+cleanup = [
+    'exit 3',
+    'printf "%s\n" "$REPO" "$BRANCH" "$EVENT" "$MAIN" "$WORKTREE" "$PWD" > "{}"',
+]
+"#,
+        out.display()
+    ));
+    herdr.link_plugin();
+
+    let worktree = herdr.path("wt");
+    let workspace_id = herdr.create_worktree(&repo, "feature", &worktree);
+    herdr.wait_for_creation_events(&worktree);
+    assert!(!out.exists(), "cleanup ran before removal");
+
+    herdr.remove_worktree(&workspace_id);
+
+    herdr.wait_until("the cleanup command writes cleanup.out", || {
+        fs::read_to_string(&out).is_ok_and(|s| s.lines().count() == 6)
+    });
+    let out = fs::read_to_string(out).unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines[0], "repo");
+    assert_eq!(lines[1], "feature");
+    assert_eq!(lines[2], "worktree.removed");
+    assert_eq!(Path::new(lines[3]), repo);
+    assert_eq!(Path::new(lines[4]), worktree);
+    assert_eq!(
+        fs::canonicalize(lines[5]).unwrap(),
+        fs::canonicalize(&repo).unwrap()
+    );
+    assert!(!worktree.exists());
+}
