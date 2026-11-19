@@ -106,6 +106,30 @@ fn on_removed() -> Result<(), String> {
         return Ok(());
     }
 
+    match (release_claims(&target.checkout_path), run_cleanup(&target)) {
+        (Err(released), Err(cleaned)) => Err(format!("{released}; {cleaned}")),
+        (released, cleaned) => released.and(cleaned),
+    }
+}
+
+/// Why not leave the claims to `seed`: on builds without a birth time a
+/// checkout recreated at the same path can reuse the old inode and would match
+/// the stale claim, and nothing else ever removes these files.
+fn release_claims(checkout_path: &str) -> Result<(), String> {
+    let Some(state_dir) = env_path("HERDR_PLUGIN_STATE_DIR") else {
+        log!("HERDR_PLUGIN_STATE_DIR is not set; claims left in place");
+        return Ok(());
+    };
+    let store =
+        ClaimStore::new(&state_dir).map_err(|e| format!("could not open the claim store: {e}"))?;
+    let released = store
+        .release_removed(checkout_path)
+        .map_err(|e| format!("could not release the claims: {e}"))?;
+    log!("released {released} claim(s) of the removed checkout");
+    Ok(())
+}
+
+fn run_cleanup(target: &WorktreeTarget) -> Result<(), String> {
     let config = Config::load(env_path("HERDR_PLUGIN_CONFIG_DIR").as_deref())?;
     let resolved = config.resolve(&target.repo_name, &target.repo_root);
     if resolved.cleanup.is_empty() {
@@ -114,8 +138,7 @@ fn on_removed() -> Result<(), String> {
     }
 
     log!("running {} cleanup command(s)", resolved.cleanup.len());
-    let failures =
-        actions::run_cleanup(&config.shell(), &target, REMOVED_EVENT, &resolved.cleanup)?;
+    let failures = actions::run_cleanup(&config.shell(), target, REMOVED_EVENT, &resolved.cleanup)?;
     for failure in &failures {
         log!("cleanup failed: {failure}");
     }

@@ -18,14 +18,15 @@ impl ClaimStore {
     }
 
     pub fn try_acquire(&self, checkout_path: &str) -> io::Result<bool> {
+        let canonical = fs::canonicalize(checkout_path)?;
         match fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(self.claim_path(checkout_path)?)
+            .open(self.claim_path_of(&canonical)?)
         {
             Ok(mut file) => {
                 use io::Write;
-                writeln!(file, "{checkout_path}")?;
+                writeln!(file, "{}", canonical.display())?;
                 Ok(true)
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(false),
@@ -45,11 +46,54 @@ impl ClaimStore {
     /// differently across events (a created worktree as given, a reopened one
     /// with symlinks resolved), and each spelling would get its own claim.
     pub fn claim_path(&self, checkout_path: &str) -> io::Result<PathBuf> {
-        let canonical = fs::canonicalize(checkout_path)?;
-        let identity = checkout_identity(&canonical)?;
+        self.claim_path_of(&fs::canonicalize(checkout_path)?)
+    }
+
+    fn claim_path_of(&self, canonical: &Path) -> io::Result<PathBuf> {
+        let identity = checkout_identity(canonical)?;
         Ok(self
             .dir
             .join(claim_file_name(&canonical.to_string_lossy(), &identity)))
+    }
+
+    /// Why match on the recorded path instead of recomputing the file name: the
+    /// name depends on the checkout's identity, which is gone with it.
+    /// Why not also remove the claim of a checkout now back at that path: it
+    /// was recreated after the removal, and freeing its claim would let both
+    /// of its racing creation events apply the hooks. The check runs right
+    /// before each removal rather than once up front, so a checkout recreated
+    /// while the store is being scanned is still recognised.
+    pub fn release_removed(&self, checkout_path: &str) -> io::Result<usize> {
+        let removed = Path::new(checkout_path);
+        let mut spellings = vec![removed.to_path_buf()];
+        if let (Some(parent), Some(name)) = (removed.parent(), removed.file_name())
+            && let Ok(parent) = fs::canonicalize(parent)
+        {
+            spellings.push(parent.join(name));
+        }
+
+        let mut count = 0;
+        for entry in fs::read_dir(&self.dir)? {
+            let claim = entry?.path();
+            let Ok(content) = fs::read_to_string(&claim) else {
+                continue;
+            };
+            let Some(recorded) = content.lines().next() else {
+                continue;
+            };
+            if !spellings.iter().any(|s| s == Path::new(recorded)) {
+                continue;
+            }
+            if self.claim_path(checkout_path).ok().as_ref() == Some(&claim) {
+                continue;
+            }
+            match fs::remove_file(&claim) {
+                Ok(()) => count += 1,
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(count)
     }
 }
 
@@ -176,6 +220,113 @@ mod tests {
 
         assert!(fx.store.try_acquire(&via_link).unwrap());
         assert!(!fx.store.try_acquire(&checkout).unwrap());
+    }
+
+    #[test]
+    fn a_claim_records_the_canonical_checkout_path() {
+        let fx = Fixture::new();
+        fx.checkout("real/feat-x");
+        let link = fx.root.path().join("link");
+        std::os::unix::fs::symlink(fx.root.path().join("real"), &link).unwrap();
+        let via_link = link.join("feat-x").to_string_lossy().into_owned();
+
+        fx.store.try_acquire(&via_link).unwrap();
+
+        let recorded = fs::read_to_string(fx.store.claim_path(&via_link).unwrap()).unwrap();
+        assert_eq!(
+            Path::new(recorded.trim_end()),
+            fs::canonicalize(&via_link).unwrap()
+        );
+    }
+
+    #[test]
+    fn removing_a_checkout_releases_only_its_own_claims() {
+        let fx = Fixture::new();
+        let removed = fx.checkout("feat-x");
+        let other = fx.checkout("feat-y");
+        fx.store.try_acquire(&removed).unwrap();
+        fx.store.try_acquire(&other).unwrap();
+        let other_claim = fx.store.claim_path(&other).unwrap();
+        fs::remove_dir(&removed).unwrap();
+
+        assert_eq!(fx.store.release_removed(&removed).unwrap(), 1);
+        assert_eq!(fs::read_dir(&fx.store.dir).unwrap().count(), 1);
+        assert!(other_claim.exists());
+    }
+
+    #[test]
+    fn a_removed_checkout_is_released_under_another_spelling_of_its_path() {
+        let fx = Fixture::new();
+        let checkout = fx.checkout("real/feat-x");
+        fx.store.try_acquire(&checkout).unwrap();
+        let link = fx.root.path().join("link");
+        std::os::unix::fs::symlink(fx.root.path().join("real"), &link).unwrap();
+        fs::remove_dir(&checkout).unwrap();
+
+        let via_link = link.join("feat-x").to_string_lossy().into_owned();
+        assert_eq!(fx.store.release_removed(&via_link).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_legacy_claim_recording_the_path_as_reported_is_released() {
+        let fx = Fixture::new();
+        let removed = fx
+            .root
+            .path()
+            .join("parent-also-gone/feat-x")
+            .to_string_lossy()
+            .into_owned();
+        fs::write(fx.store.dir.join("legacy-claim"), format!("{removed}\n")).unwrap();
+
+        assert_eq!(fx.store.release_removed(&removed).unwrap(), 1);
+    }
+
+    #[test]
+    fn the_claim_of_a_checkout_recreated_at_the_removed_path_is_kept() {
+        let fx = Fixture::new();
+        let checkout = fx.checkout("feat-x");
+        fx.store.try_acquire(&checkout).unwrap();
+        fs::remove_dir(&checkout).unwrap();
+        fx.checkout("feat-x");
+        let recreated = fx.store.try_acquire(&checkout).unwrap();
+
+        let released = fx.store.release_removed(&checkout).unwrap();
+
+        assert!(fx.store.claim_path(&checkout).unwrap().exists());
+        // Without a birth time the recreated checkout may share the old claim.
+        assert_eq!(released, usize::from(recreated));
+    }
+
+    #[test]
+    fn entries_that_record_no_path_are_left_alone_on_removal() {
+        let fx = Fixture::new();
+        let removed = fx.root.path().join("gone").to_string_lossy().into_owned();
+        fs::write(fx.store.dir.join("being-written"), "").unwrap();
+        fs::create_dir(fx.store.dir.join("not-a-claim")).unwrap();
+
+        assert_eq!(fx.store.release_removed(&removed).unwrap(), 0);
+        assert_eq!(fs::read_dir(&fx.store.dir).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn a_missing_claim_store_is_reported_on_removal() {
+        let fx = Fixture::new();
+        fs::remove_dir(&fx.store.dir).unwrap();
+        assert!(fx.store.release_removed("/nonexistent/worktree").is_err());
+    }
+
+    #[test]
+    fn a_claim_that_cannot_be_removed_is_reported_on_removal() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = Fixture::new();
+        let removed = fx.root.path().join("gone").to_string_lossy().into_owned();
+        fs::write(fx.store.dir.join("claim"), format!("{removed}\n")).unwrap();
+        fs::set_permissions(&fx.store.dir, fs::Permissions::from_mode(0o555)).unwrap();
+
+        let result = fx.store.release_removed(&removed);
+
+        fs::set_permissions(&fx.store.dir, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(result.is_err());
     }
 
     #[test]

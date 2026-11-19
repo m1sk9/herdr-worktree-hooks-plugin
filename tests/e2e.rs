@@ -201,6 +201,22 @@ impl Herdr {
         });
     }
 
+    /// Claim files whose recorded checkout is `checkout`.
+    fn claims_recording(&self, checkout: &Path) -> usize {
+        let dir = self
+            .path("home/.local/state/herdr/plugins")
+            .join(PLUGIN_ID)
+            .join("claims");
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| fs::read_to_string(entry.ok()?.path()).ok())
+                    .filter(|content| content.lines().next() == checkout.to_str())
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
     fn wait_until(&self, what: &str, mut condition: impl FnMut() -> bool) {
         let deadline = Instant::now() + TIMEOUT;
         while !condition() {
@@ -543,4 +559,35 @@ cleanup = [
             .runs_mentioning("cleanup failed: \"exit 3\"")
             .is_empty()
     });
+}
+
+#[test]
+#[ignore = "needs a herdr binary; run with --ignored"]
+fn removing_a_worktree_releases_its_claim() {
+    let herdr = Herdr::start();
+    let repo = init_repo(&herdr, &[]);
+    herdr.link_plugin();
+
+    let worktree = herdr.path("wt");
+    let workspace_id = herdr.create_worktree(&repo, "feature", &worktree);
+    herdr.wait_for_creation_events(&worktree);
+    let recorded = fs::canonicalize(&worktree).unwrap();
+    assert_eq!(
+        herdr.claims_recording(&recorded),
+        1,
+        "{}",
+        herdr.diagnostics()
+    );
+
+    herdr.remove_worktree(&workspace_id);
+
+    herdr.wait_until("the removal releases the claim", || {
+        !herdr.runs_mentioning("released 1 claim(s)").is_empty()
+    });
+    assert_eq!(
+        herdr.claims_recording(&recorded),
+        0,
+        "{}",
+        herdr.diagnostics()
+    );
 }
