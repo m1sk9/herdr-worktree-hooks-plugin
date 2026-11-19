@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.3...v0.3.0) (2026-11-19)
+
+
+### Features
+
+* run cleanup commands when a worktree is removed ([#37](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/37)) ([58c3b01](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/58c3b011f77ff3abd9f42551a56209f052956bcd))
+
+
+### Bug Fixes
+
+* key claims by the canonical checkout path ([#39](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/39)) ([c2c468d](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/c2c468db86a2a14cd39c2ae17257b4bdc4a111c7))
+* release the claims of a worktree when herdr removes it ([#40](https://github.com/m1sk9/herdr-worktree-hooks-plugin/issues/40)) ([4ccadb2](https://github.com/m1sk9/herdr-worktree-hooks-plugin/commit/4ccadb2b1e94db9a972edbfbcc104db7d99cfe1f))
+
 ## [0.2.3](https://github.com/m1sk9/herdr-worktree-hooks-plugin/compare/v0.2.2...v0.2.3) (2026-11-17)
 
 
