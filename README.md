@@ -124,13 +124,13 @@ Two guards keep repeat firings harmless:
 2. Outside of `worktree.created`, the checkout must have been created within `fresh_window_secs` (default 300) — otherwise opening an *existing* worktree, which also emits `workspace.created`, would look like a new one.
 
 Each worktree is then claimed with an `O_EXCL` file under `$HERDR_PLUGIN_STATE_DIR/claims/` (on macOS, `~/.local/state/herdr/plugins/m1sk9.worktree-hooks/claims/`). The first event wins; the rest log a skip.
-The claim is keyed by the checkout's path (with symlinks resolved, since herdr does not always spell the same checkout the same way) and its filesystem identity (device, inode and, where available, creation time), so a worktree removed and recreated at the same path is treated as new. The prebuilt Linux (musl) binaries cannot read the creation time, so a recreated checkout that happens to reuse the old inode is still skipped; use **Apply worktree hooks** below in that case.
+The claim is keyed by the checkout's path (with symlinks resolved, since herdr does not always spell the same checkout the same way) and its filesystem identity (device, inode and, where available, creation time), so a worktree removed and recreated at the same path is treated as new. When herdr removes a worktree, its claims are deleted as well. The prebuilt Linux (musl) binaries cannot read the creation time, so a checkout removed outside herdr (for example with `git worktree remove`) and recreated with the old inode is still skipped; use **Apply worktree hooks** below in that case.
 
 Only `worktree.created` reports the branch, so `$BRANCH` is read back with `git rev-parse` when the winning event did not carry it.
 
 The main checkout itself (`is_linked_worktree = false`) is always skipped.
 
-`worktree.removed` is handled separately: it fires exactly once per removal, so `cleanup` runs without the freshness window or a claim, and it runs even for worktrees the plugin never applied to.
+`worktree.removed` is handled separately: it fires exactly once per removal, so `cleanup` runs without the freshness window or a claim, and it runs even for worktrees the plugin never applied to. Before cleanup, it deletes every claim that recorded the removed checkout, except the claim of a checkout already recreated at the same path.
 
 ## Re-running by hand
 
